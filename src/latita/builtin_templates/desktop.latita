@@ -1,0 +1,57 @@
+profile: desktop
+os_family: fedora
+description: Desktop VM with XFCE and Firefox
+base_image: fedora43-base.qcow2
+cpus: 2
+memory: 4096
+disk_size: 20G
+guest_user: dev
+passwordless_sudo: true
+
+ephemeral:
+  transient: false
+  destroy_on_stop: false
+
+network:
+  mode: nat
+  nat_network: default
+  mgmt_ip: 10.31.0.2
+  mgmt_prefix: 24
+
+security:
+  selinux: true
+  no_guest_agent: true
+  restrict_network: false
+
+provision:
+  packages:
+    - firefox
+    - openssh-clients
+    - openssh-server
+    - spice-vdagent
+    - lightdm
+    - lightdm-gtk
+    - xorg-x11-server-Xorg
+    - xfce4-session
+    - xfce4-panel
+    - xfdesktop
+    - thunar
+    - xterm
+  write_files:
+    - path: /etc/lightdm/lightdm.conf.d/50-autologin.conf
+      owner: root:root
+      permissions: "0644"
+      content: |
+        [Seat:*]
+        autologin-user={guest_user}
+        autologin-user-timeout=0
+        user-session=xfce
+        greeter-session=lightdm-gtk-greeter
+  root_commands:
+    - systemctl enable --now sshd
+    - systemctl enable lightdm
+    - systemctl set-default graphical.target
+    - systemctl enable spice-vdagentd || true
+    - mkdir -p /home/{guest_user}/Downloads /home/{guest_user}/workspace /home/{guest_user}/.ssh
+    - chown -R {guest_user}:{guest_user} /home/{guest_user}
+    - restorecon -RF /home/{guest_user} || true

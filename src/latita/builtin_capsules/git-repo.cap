@@ -1,0 +1,17 @@
+description: Clone a git repository into the workspace
+compatibility:
+  profiles: [headless, desktop]
+  os_family: [fedora, ubuntu]
+
+provision:
+  packages: [git]
+  user_commands:
+    - |
+      REPO="https://github.com/{repo_owner}/{repo_name}.git"
+      DEST="/home/{guest_user}/workspace/{repo_name}"
+      if [ ! -d "$DEST/.git" ]; then
+        git clone "$REPO" "$DEST"
+      fi
+
+# This capsule expects repo_owner and repo_name to be provided via template overrides or live args.
+# For now it uses placeholders that can be replaced by template-level write_files or user_commands.

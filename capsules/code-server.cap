@@ -1,0 +1,27 @@
+description: Run code-server via podman
+compatibility:
+  profiles: [headless, desktop]
+  os_family: [fedora, ubuntu]
+
+provision:
+  packages: [podman]
+  root_commands: []
+  user_commands:
+    - |
+      podman rm -f code-server >/dev/null 2>&1 || true
+      podman volume inspect code-server-local >/dev/null 2>&1 || podman volume create code-server-local >/dev/null
+      podman volume inspect code-server-config >/dev/null 2>&1 || podman volume create code-server-config >/dev/null
+      mkdir -p /home/{guest_user}/workspace
+      podman run -d --name code-server --restart=unless-stopped \
+        -p 127.0.0.1:8443:8080 \
+        -v /home/{guest_user}/workspace:/home/coder/project:Z \
+        -v code-server-local:/home/coder/.local \
+        -v code-server-config:/home/coder/.config \
+        ghcr.io/coder/code-server:latest
+
+live:
+  user: dev
+  commands:
+    - podman rm -f code-server 2>/dev/null || true
+    - mkdir -p /home/{guest_user}/workspace
+    - podman run -d --name code-server --restart=unless-stopped -p 127.0.0.1:8443:8080 -v /home/{guest_user}/workspace:/home/coder/project:Z ghcr.io/coder/code-server:latest

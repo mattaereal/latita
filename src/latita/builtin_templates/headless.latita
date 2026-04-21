@@ -1,0 +1,46 @@
+profile: headless
+os_family: fedora
+description: Minimal headless dev box with podman
+base_image: fedora43-base.qcow2
+cpus: 2
+memory: 4096
+disk_size: 20G
+guest_user: dev
+passwordless_sudo: true
+
+ephemeral:
+  transient: true
+  destroy_on_stop: false
+
+network:
+  mode: nat
+  nat_network: default
+  mgmt_ip: 10.31.0.10
+  mgmt_prefix: 24
+
+security:
+  selinux: true
+  no_guest_agent: true
+  restrict_network: false
+
+provision:
+  packages:
+    - git
+    - vim
+    - podman
+    - crun
+    - slirp4netns
+    - fuse-overlayfs
+  write_files:
+    - path: /etc/containers/containers.conf
+      permissions: "0644"
+      content: |
+        [network]
+        default_rootless_network_cmd="slirp4netns"
+  root_commands:
+    - systemctl enable --now sshd
+    - loginctl enable-linger {guest_user}
+    - mkdir -p /home/{guest_user}/workspace
+    - chown -R {guest_user}:{guest_user} /home/{guest_user}/workspace
+    - restorecon -RF /home/{guest_user}/workspace || true
+    - runuser -u {guest_user} -- podman info >/dev/null
