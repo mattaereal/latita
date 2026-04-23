@@ -75,10 +75,10 @@ class TestAskSelectBackCancel:
 
 class TestAskTextBackCancel:
     @patch("latita.prompts.questionary")
-    def test_back_arrow_raises_menu_back(self, mock_q):
+    def test_empty_input_raises_menu_back(self, mock_q):
         mock_text = MagicMock()
         mock_q.text = mock_text
-        mock_text.return_value.ask.return_value = "←"
+        mock_text.return_value.ask.return_value = ""
         with pytest.raises(MenuBack):
             ask_text("msg", default="", allow_back=True)
 
