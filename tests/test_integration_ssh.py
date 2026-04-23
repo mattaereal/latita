@@ -232,15 +232,8 @@ class TestFedoraSsh:
 
         destroy_instance(name)
 
-    @pytest.mark.skip(reason="Cloud-init provisioning does not run in session mode; sshd and user accounts are not created. See AGENTS.md for details.")
     def test_real_ssh_to_vm_executes_command(self, fedora_cfg):
-        """Real SSH end-to-end via localhost port forwarding in session mode.
-
-        NOTE: This test requires cloud-init to properly provision the VM.
-        Currently, cloud-init detects NoCloud but does not process user-data
-        in session-mode VMs (reason TBD). Until this is fixed, sshd is not
-        running and the dev user is not created, so real SSH cannot succeed.
-        """
+        """Real SSH end-to-end via localhost port forwarding in session mode."""
         cfg = fedora_cfg
         name = "test-f43-realssh"
         self._create_fedora_vm(cfg, name)

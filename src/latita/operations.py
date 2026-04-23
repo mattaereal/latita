@@ -5,6 +5,7 @@ import re
 import shutil
 import socket
 import subprocess
+import tempfile
 import urllib.request
 from copy import deepcopy
 from pathlib import Path
@@ -106,6 +107,40 @@ def _find_free_port(start: int = 2222, end: int = 9999) -> int:
             if s.connect_ex(("127.0.0.1", port)) != 0:
                 return port
     raise RuntimeError(f"No free TCP port found in range {start}-{end}")
+
+
+def _build_nocloud_iso(
+    ud_path: Path,
+    nc_path: Path | None,
+    iso_path: Path,
+    instance_id: str = "latita",
+    hostname: str = "latita-vm",
+) -> None:
+    """Create a NoCloud ISO from user-data, meta-data, and optional network-config.
+
+    The ISO is labelled ``cidata`` so cloud-init's nocloud datasource
+    discovers it automatically.  This is more reliable than ``virt-install
+    --cloud-init`` in ``qemu:///session`` mode, where the temporary ISO
+    created by virt-install is sometimes missing by the time the guest
+    boots.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        tmp_dir = Path(td)
+        (tmp_dir / "user-data").write_text(ud_path.read_text())
+        (tmp_dir / "meta-data").write_text(
+            f"instance-id: {instance_id}\nlocal-hostname: {hostname}\n"
+        )
+        files = [str(tmp_dir / "user-data"), str(tmp_dir / "meta-data")]
+        if nc_path is not None and nc_path.exists():
+            (tmp_dir / "network-config").write_text(nc_path.read_text())
+            files.append(str(tmp_dir / "network-config"))
+        run([
+            "xorriso", "-as", "mkisofs",
+            "-o", str(iso_path),
+            "-V", "cidata",
+            "-J", "-R",
+            *files,
+        ])
 
 
 # ---------------------------------------------------------------------------
@@ -518,6 +553,11 @@ def _run_create(
     ud_path.write_text(user_data)
     nc_path.write_text(net_cfg)
 
+    # Build a persistent NoCloud ISO — more reliable than virt-install's
+    # temporary --cloud-init ISO, especially in qemu:///session mode.
+    iso_path = inst / "nocloud.iso"
+    _build_nocloud_iso(ud_path, nc_path, iso_path, instance_id=recipe["name"])
+
     run(["qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", str(base_img), str(overlay)])
     run(["qemu-img", "resize", str(overlay), recipe["disk_size"]])
 
@@ -530,7 +570,7 @@ def _run_create(
         "--import",
         "--osinfo", osinfo,
         "--disk", f"path={overlay},format=qcow2,bus=virtio,discard=unmap",
-        "--cloud-init", f"user-data={ud_path},network-config={nc_path},disable=on",
+        "--disk", f"path={iso_path},device=cdrom,readonly=on",
         "--rng", "/dev/urandom",
         "--noautoconsole",
     ]
@@ -782,6 +822,9 @@ def run_instance(
         ud_path.write_text(user_data)
         nc_path.write_text(net_cfg)
 
+        iso_path = Path(td) / "nocloud.iso"
+        _build_nocloud_iso(ud_path, nc_path, iso_path, instance_id=name)
+
         args = [
             "--name", name,
             "--memory", str(recipe["memory"]),
@@ -790,7 +833,7 @@ def run_instance(
             "--import",
             "--osinfo", osinfo,
             "--disk", f"path={overlay},format=qcow2,bus=virtio,discard=unmap",
-            "--cloud-init", f"user-data={ud_path},network-config={nc_path},disable=on",
+            "--disk", f"path={iso_path},device=cdrom,readonly=on",
             "--rng", "/dev/urandom",
             "--noautoconsole",
             "--transient",
@@ -925,10 +968,9 @@ def revive_instance(name: str) -> None:
     profile = SecurityProfile.from_dict(sec_dict)
     args = apply_hardening_to_args(profile, args, vm_name=name)
 
-    ud_path = cfg.inst_dir / name / "user-data.yaml"
-    nc_path = cfg.inst_dir / name / "network-config.yaml"
-    if ud_path.exists() and nc_path.exists():
-        args.extend(["--cloud-init", f"user-data={ud_path},network-config={nc_path},disable=on"])
+    iso_path = cfg.inst_dir / name / "nocloud.iso"
+    if iso_path.exists():
+        args.extend(["--disk", f"path={iso_path},device=cdrom,readonly=on"])
 
     virt_install(args)
     metadata.increment_run_count(name)
