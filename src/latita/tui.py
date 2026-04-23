@@ -4,7 +4,6 @@ import asyncio
 from typing import Optional
 
 from textual.app import App
-from textual.binding import Binding
 from textual.widgets import Static
 
 from .operations import (
@@ -89,21 +88,34 @@ class Dashboard(App):
     }
     '''
 
-    BINDINGS = [
-        Binding('q', 'quit', 'Quit', show=False),
-        Binding('1', 'action_1', '', show=False),
-        Binding('2', 'action_2', '', show=False),
-        Binding('3', 'action_3', '', show=False),
-        Binding('4', 'action_4', '', show=False),
-        Binding('5', 'action_5', '', show=False),
-        Binding('6', 'action_6', '', show=False),
-        Binding('7', 'action_7', '', show=False),
-        Binding('8', 'action_8', '', show=False),
-        Binding('9', 'action_9', '', show=False),
-        Binding('up', 'cursor_up', '', show=False),
-        Binding('down', 'cursor_down', '', show=False),
-        Binding('enter', 'confirm_action', '', show=False),
-    ]
+    def on_key(self, event) -> None:
+        match event.key:
+            case 'q':
+                self.exit()
+            case 'up' | 'up arrow':
+                self._cursor_up()
+            case 'down' | 'down arrow':
+                self._cursor_down()
+            case 'enter':
+                self._confirm()
+            case '1':
+                self._with_refresh(self._action_create)
+            case '2':
+                self._with_refresh(self._action_run)
+            case '3':
+                self._with_refresh(self._action_list)
+            case '4':
+                self._with_refresh(self._action_start)
+            case '5':
+                self._with_refresh(self._action_stop)
+            case '6':
+                self._with_refresh(self._action_destroy)
+            case '7':
+                self._with_refresh(self._action_ssh)
+            case '8':
+                self._with_refresh(self._action_connect)
+            case '9':
+                self._with_refresh(self._action_bootstrap)
 
     def __init__(self) -> None:
         super().__init__()
@@ -161,47 +173,17 @@ class Dashboard(App):
             self._refresh_vm_list()
             self._update_vm_display()
 
-    def action_1(self) -> None:
-        self._with_refresh(self._action_create)
-
-    def action_2(self) -> None:
-        self._with_refresh(self._action_run)
-
-    def action_3(self) -> None:
-        self._with_refresh(self._action_list)
-
-    def action_4(self) -> None:
-        self._with_refresh(self._action_start)
-
-    def action_5(self) -> None:
-        self._with_refresh(self._action_stop)
-
-    def action_6(self) -> None:
-        self._with_refresh(self._action_destroy)
-
-    def action_7(self) -> None:
-        self._with_refresh(self._action_ssh)
-
-    def action_8(self) -> None:
-        self._with_refresh(self._action_connect)
-
-    def action_9(self) -> None:
-        self._with_refresh(self._action_bootstrap)
-
-    def action_cursor_up(self) -> None:
+    def _cursor_up(self) -> None:
         if self._vm_list:
             self._selected_idx = (self._selected_idx - 1) % len(self._vm_list)
-            self._highlight_selected()
+            self._update_vm_display()
 
-    def action_cursor_down(self) -> None:
+    def _cursor_down(self) -> None:
         if self._vm_list:
             self._selected_idx = (self._selected_idx + 1) % len(self._vm_list)
-            self._highlight_selected()
+            self._update_vm_display()
 
-    def _highlight_selected(self) -> None:
-        self._update_vm_display()
-
-    def action_confirm_action(self) -> None:
+    def _confirm(self) -> None:
         if self._vm_list and 0 <= self._selected_idx < len(self._vm_list):
             name = self._vm_list[self._selected_idx]['name']
             self._action_ssh_to(name)
