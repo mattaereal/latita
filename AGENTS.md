@@ -62,6 +62,8 @@ If `LIBVIRT_DEFAULT_URI` is `qemu:///session` or `Config.for_tests` is used, lat
 
 **Libvirt connectivity check**: Before any VM operation, latita verifies the configured libvirt URI is reachable. If `qemu:///system` is unavailable (no socket, no sudo, connection refused), `create_instance` and `run_instance` fail with a clear message: `Cannot connect to libvirt at qemu:///system. Set LIBVIRT_DEFAULT_URI=qemu:///session to use user-level libvirt without sudo, or ensure the system libvirtd daemon is running and sudo is configured.`
 
+**Auto-detection**: `Config.default()` now probes `qemu:///system` at startup. If the socket is absent or connection is refused, it automatically falls back to `qemu:///session` — no env var needed. Set `LIBVIRT_DEFAULT_URI` explicitly to override.
+
 ### Why Python (not Rust)
 
 Latita is a CLI orchestrator, not a VMM. The actual runtime is spent waiting on:
