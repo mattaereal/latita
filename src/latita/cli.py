@@ -42,20 +42,41 @@ app = typer.Typer(
 )
 
 # Sub-typer for capsules
-capsule_app = typer.Typer(help="Manage capsules")
-app.add_typer(capsule_app, name="capsule")
+capsule_app = typer.Typer(help='Manage capsules', invoke_without_command=True)
+app.add_typer(capsule_app, name='capsule')
 
 # Sub-typer for templates
-template_app = typer.Typer(help="Manage templates")
-app.add_typer(template_app, name="template")
+template_app = typer.Typer(help='Manage templates', invoke_without_command=True)
+app.add_typer(template_app, name='template')
 
 
 @app.callback(invoke_without_command=True)
 def callback(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
-        console.print("[bold]Latita[/bold] - Ephemeral libvirt/QEMU lab manager")
-        console.print("Run 'latita --help' for commands or 'latita menu' for interactive mode.")
+        console.print('[bold]Latita[/bold] - Ephemeral libvirt/QEMU lab manager')
+        console.print('Run [dim]latita --help[/dim] for commands or [dim]latita menu[/dim] for interactive mode.')
         raise typer.Exit()
+
+
+@capsule_app.callback()
+def capsule_callback(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        console.print('[bold]Capsule commands:[/bold]')
+        console.print('  list  - List available capsules')
+        console.print('  apply - Apply a capsule to a running VM (via SSH)')
+        console.print()
+        console.print('Run [dim]latita capsule <command> --help[/dim] for more info.')
+
+
+@template_app.callback()
+def template_callback(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        console.print('[bold]Template commands:[/bold]')
+        console.print('  list     - List available .latita templates')
+        console.print('  show     - Show a template (full YAML)')
+        console.print('  generate - Interactively generate a new template')
+        console.print()
+        console.print('Run [dim]latita template <command> --help[/dim] for more info.')
 
 
 def _ensure_running(name: str) -> None:
@@ -259,7 +280,16 @@ def create_cmd(
     advanced: bool = typer.Option(False, "--advanced", help="Interactive advanced mode"),
     full: bool = typer.Option(False, "--full", help="Interactive full wizard mode"),
 ) -> None:
-    """Create a VM from a template."""
+    '''Create a VM from a template.
+
+    Examples:
+      latita create headless --name myvm
+      latita create headless --name webdev --net --capsule code-server
+      latita create headless --name bigvm --cpus 4 --memory 8192 --disk 40G
+      latita create headless --advanced   # interactive with resource overrides
+      latita create headless --full       # full wizard with all options
+
+    See [dim]latita template list[/dim] to see available templates.'''
     # Check for project-level .latita config
     project_cfg = load_project_config()
     clear_project_config()
@@ -307,7 +337,15 @@ def run_cmd(
     allow_host: list[str] = typer.Option([], "--allow-host", help="Allowed egress host (repeatable)"),
     restrict_network: bool = typer.Option(False, "--restrict-network", help="Restrict outbound network"),
 ) -> None:
-    """Run a one-shot ephemeral VM (auto-cleaned on shutdown)."""
+    '''Run a one-shot ephemeral VM (auto-cleaned on shutdown).
+
+    Examples:
+      latita run headless -- uname -a
+      latita run headless --net -- python3 --version
+      latita run headless --name test-001 --cpus 2 --memory 4096 -- echo hello
+      latita run headless --capsule tailscale -- curl -s ifconfig.me
+
+    No persistent state — VM is destroyed when the command exits or you Ctrl-C.'''
     overrides = _build_overrides(
         cpus=cpus,
         memory=memory,
@@ -440,36 +478,49 @@ def template_list_cmd() -> None:
     table = Table(title="Templates")
     table.add_column("Name")
     table.add_column("Profile")
+    table.add_column("OS")
+    table.add_column("CPUs")
+    table.add_column("Memory")
+    table.add_column("Disk")
     table.add_column("Description")
     for name, data in templates.items():
+        cpus = data.get("cpus", "-")
+        memory = data.get("memory", "-")
+        disk = data.get("disk_size", "-")
+        os_family = data.get("os_family", "-")
+        desc = str(data.get("description", "")).strip() or "-"
         table.add_row(
             name,
             str(data.get("profile", "-")),
-            str(data.get("description", "")).strip() or "-",
+            os_family,
+            str(cpus),
+            str(memory) if memory != "-" else "-",
+            str(disk) if disk != "-" else "-",
+            desc,
         )
     console.print(table)
 
 
-@template_app.command(name="show")
+@template_app.command(name='show')
 def template_show_cmd(name: str) -> None:
-    """Show a template's contents."""
+    '''Show a template's contents (full YAML).'''
     data = load_latita_template(name)
-    console.print(f"[bold]{name}.latita[/bold]")
+    console.print(f'[bold]{name}.latita[/bold]')
     console.print(data)
 
 
-@template_app.command(name="generate")
+@template_app.command(name='generate')
 def template_generate_cmd(
-    output: Path = typer.Option(..., "--output", "-o", help="Output file path (e.g. mytemplate.latita)"),
+    output: Path = typer.Option(..., '--output', '-o', help='Output file path (e.g. mytemplate.latita)'),
 ) -> None:
-    """Interactively generate a new .latita template file."""
+    '''Interactively generate a new .latita template file.'''
     try:
         recipe = interactive_generate_template()
     except typer.Abort:
-        console.print("Aborted.", style="yellow")
+        console.print('Aborted.', style='yellow')
         raise typer.Exit()
     write_yaml(output, recipe)
-    console.print(f"[green]Template written to {output}[/green]")
+    console.print(f'[green]Template written to {output}[/green]')
 
 
 # ---------------------------------------------------------------------------
