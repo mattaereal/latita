@@ -1289,15 +1289,67 @@ def list_instances() -> None:
 # ---------------------------------------------------------------------------
 
 def doctor() -> None:
+    import os, subprocess, sys
     cfg = get_config()
-    table = Table(title="Doctor")
-    table.add_column("Item")
-    table.add_column("Status")
-    for cmd in ["virsh", "virt-install", "qemu-img", "ssh", "curl", "ssh-keygen", "virt-viewer", "openssl", "setfacl"]:
-        table.add_row(cmd, "ok" if shutil.which(cmd) else "missing")
-    table.add_row("root", str(cfg.root_dir))
-    table.add_row("uri", cfg.libvirt_uri)
-    console.print(table)
+    console.print('\n[bold]Doctor — checking system dependencies[/bold]\n')
+
+    issues = []
+
+    for cmd in ['virsh', 'virt-install', 'qemu-img', 'ssh', 'curl', 'ssh-keygen', 'openssl']:
+        status = 'ok' if shutil.which(cmd) else 'MISSING'
+        if status == 'MISSING':
+            issues.append(cmd)
+        console.print(f'  {cmd}: [green]{status}[/green]' if status == 'ok' else f'  {cmd}: [red]{status}[/red]')
+
+    if cfg.is_session:
+        console.print(f'  libvirt URI: [green]{cfg.libvirt_uri}[/green] (session mode)')
+    else:
+        console.print(f'  libvirt URI: [yellow]{cfg.libvirt_uri}[/yellow] (system mode — may need sudo)')
+
+    try:
+        subprocess.run(['/usr/bin/python3', '-c', 'import gi'], check=True, capture_output=True)
+        console.print('  gi (PyGObject): [green]ok[/green]')
+    except subprocess.CalledProcessError:
+        console.print('  gi (PyGObject): [red]MISSING[/red]')
+        issues.append('gi')
+
+    uid = os.getuid()
+    socket_path = f'/run/user/{uid}/libvirt/virtqemud-sock'
+    if os.path.exists(socket_path):
+        console.print(f'  libvirtd socket: [green]running[/green] ({socket_path})')
+    else:
+        console.print(f'  libvirtd socket: [red]not found[/red] ({socket_path})')
+        issues.append('libvirtd-socket')
+
+    console.print(f'\n  Root: {cfg.root_dir}')
+    console.print(f'  Base images: {cfg.base_dir}')
+
+    if not issues:
+        console.print('\n[green]All checks passed![/green]')
+        return
+
+    console.print(f'\n[yellow]Found {len(issues)} issue(s):[/yellow]')
+    for issue in issues:
+        console.print(f'  - {issue}')
+
+    script = Path(__file__).parent.parent / 'scripts' / 'install-deps.sh'
+    if script.exists():
+        console.print(f'\n[bold]Run `latita doctor --install` to attempt automatic fixes,[/bold]')
+        console.print(f'or run:')
+        console.print(f'  python3 {script}')
+    else:
+        console.print(f'\nTo fix, run the install-deps script:')
+        console.print(f'  python3 scripts/install-deps.sh')
+
+
+def doctor_install() -> int:
+    script = Path(__file__).parent.parent / 'scripts' / 'install-deps.sh'
+    if not script.exists():
+        console.print('[red]install-deps.sh not found[/red]')
+        return 1
+    import subprocess
+    r = subprocess.run([sys.executable, str(script)])
+    return r.returncode
 
 
 # ---------------------------------------------------------------------------

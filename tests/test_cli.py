@@ -33,7 +33,7 @@ class TestCliHelp:
     def test_doctor(self):
         result = runner.invoke(app, ["doctor"])
         assert result.exit_code == 0
-        assert "uri" in result.output
+        assert "qemu:///" in result.output
 
     def test_template_show(self):
         result = runner.invoke(app, ["template", "show", "headless"])

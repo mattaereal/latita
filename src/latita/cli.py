@@ -393,9 +393,13 @@ def init_base_cmd(
 
 
 @app.command(name="doctor")
-def doctor_cmd() -> None:
-    """Check host dependencies."""
-    doctor()
+def doctor_cmd(install: bool = False) -> None:
+    """Check host dependencies. Use --install to attempt automatic fixes."""
+    from latita.operations import doctor_install
+    if install:
+        doctor_install()
+    else:
+        doctor()
 
 
 # ---------------------------------------------------------------------------

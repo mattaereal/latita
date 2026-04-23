@@ -17,6 +17,18 @@ uv sync
 uv run latita --help
 ```
 
+### System dependencies
+
+Before running latita, ensure you have the required system packages installed. Run:
+
+```bash
+python3 scripts/install-deps.sh
+```
+
+This will detect your package manager (apt, dnf, yum, pacman, or zypper) and install: `virt-install`, `qemu-img`, `virsh`, `xorriso`, and `python3-gi`. It will also prompt you to enable the libvirtd user socket for passwordless operation.
+
+If anything is still missing, run `latita doctor` to check and `latita doctor --install` to attempt automatic fixes.
+
 ## Quick start
 
 ```bash
