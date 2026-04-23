@@ -1060,6 +1060,21 @@ def get_vm_ip(name: str) -> str | None:
     return None
 
 
+def _discover_session_port(name: str) -> str | None:
+    cfg = get_config()
+    cp = run(
+        ['virsh', '-c', cfg.libvirt_uri, 'dumpxml', name],
+        capture=True, check=False,
+    )
+    if cp.returncode != 0:
+        return None
+    import re
+    m = re.search(r'hostfwd=tcp::([0-9]+)-:22', cp.stdout)
+    if m:
+        return m.group(1)
+    return None
+
+
 def ssh_instance(name: str, command: str | None = None) -> None:
     validate_name(name)
     env = read_instance_env(name)
@@ -1070,8 +1085,20 @@ def ssh_instance(name: str, command: str | None = None) -> None:
         ip = "localhost"
         ssh_port = forwarded_port
     else:
-        ip = get_vm_ip(name)
-        ssh_port = None
+        cfg = get_config()
+        if cfg.is_session:
+            discovered = _discover_session_port(name)
+            if discovered:
+                ip = "localhost"
+                ssh_port = discovered
+            else:
+                raise typer.BadParameter(
+                    f"Could not find SSH port for {name}. "
+                    f"Run: virsh -c qemu:///session dumpxml {name} | grep hostfwd"
+                )
+        else:
+            ip = get_vm_ip(name)
+            ssh_port = None
     if not ip:
         raise typer.BadParameter(f"cannot resolve IP for {name}")
 

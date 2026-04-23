@@ -51,12 +51,12 @@ def ask_text(message: str, default: str = "", *, allow_back: bool = False) -> st
     _ensure_questionary()
     hint = ""
     if allow_back:
-        hint = "  (type ← to go back, empty to cancel)"
+        hint = "  (Enter alone to go back)"
     res = questionary.text(f"{message}{hint}", default=default).ask()  # type: ignore[misc]
     if res is None:
         raise MenuCancel()
     stripped = res.strip()
-    if allow_back and stripped == "←":
+    if allow_back and not stripped:
         raise MenuBack()
     return stripped
 
@@ -82,7 +82,7 @@ def ask_select(
         elif default in choices:
             valid_default = default
         else:
-            valid_default = full_choices[0] if full_choices else None
+            valid_default = None
 
     res = questionary.select(message, choices=full_choices, default=valid_default).ask()  # type: ignore[misc]
     if res is None:
@@ -267,13 +267,14 @@ def prompt_download_base_image() -> bool:
 MenuAction = Callable[[], bool]
 
 
-def _submenu(title: str, actions: dict[str, MenuAction]) -> bool:
+def _submenu(title: str, actions: dict[str, MenuAction], parent: str | None = None) -> bool:
     """Show an interactive sub-menu with questionary. Return True to go back."""
     _ensure_questionary()
     labels = list(actions.keys())
     choices = ["← Back"] + labels
+    subtitle = f"{parent} > {title}" if parent else title
     while True:
-        result = questionary.select(title, choices=choices).ask()  # type: ignore[misc]
+        result = questionary.select(subtitle, choices=choices).ask()  # type: ignore[misc]
         if result is None:
             return True  # Ctrl-C / escape = go back
         if result == "← Back":
@@ -338,14 +339,17 @@ def menu_loop(
         top_labels.append("Setup")
         top_groups.append(setup_actions)
 
-    choices = ["← Quit"] + top_labels
+    from questionary import Choice
+    choices: list[Any] = [Choice("← Quit", value="← Quit")]
+    for i, label in enumerate(top_labels, 1):
+        choices.append(Choice(label, value=label, shortcut=str(i)))
     while True:
         result = questionary.select("Latita Menu", choices=choices).ask()  # type: ignore[misc]
         if result is None or result == "← Quit":
             break
         if result in top_labels:
             idx = top_labels.index(result)
-            _submenu(result, top_groups[idx])
+            _submenu(result, top_groups[idx], parent="Latita Menu")
 
 
 # ---------------------------------------------------------------------------
