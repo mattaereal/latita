@@ -100,6 +100,28 @@ def _package_manager_for_recipe(recipe: dict[str, Any]) -> str:
     return "dnf"
 
 
+def _check_libvirt_connectivity(cfg) -> None:
+    """Verify libvirt is reachable; emit helpful hint if not."""
+    if cfg.is_session:
+        return
+    import subprocess
+    try:
+        cp = subprocess.run(
+            ["virsh", "-c", cfg.libvirt_uri, "list"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if cp.returncode in (0, 1):
+            return
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    raise typer.BadParameter(
+        f"Cannot connect to libvirt at {cfg.libvirt_uri}. "
+        "Set LIBVIRT_DEFAULT_URI=qemu:///session to use user-level libvirt without sudo, "
+        "or ensure the system libvirtd daemon is running and sudo is configured."
+    )
+
 def _find_free_port(start: int = 2222, end: int = 9999) -> int:
     """Find an available TCP port on localhost."""
     for port in range(start, end + 1):
@@ -462,6 +484,7 @@ def create_instance(
 
     need_cmd("qemu-img", "virt-install", "virsh")
     cfg.ensure_dirs()
+    _check_libvirt_connectivity(cfg)
 
     # Networking
     net = recipe["network"]
@@ -806,6 +829,7 @@ def run_instance(
 
     need_cmd("qemu-img", "virt-install", "virsh")
     cfg.ensure_dirs()
+    _check_libvirt_connectivity(cfg)
     net = recipe["network"]
     _ensure_host_networks(cfg, net["mode"], net.get("nat_network"))
 

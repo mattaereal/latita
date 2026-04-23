@@ -60,6 +60,8 @@ If `LIBVIRT_DEFAULT_URI` is `qemu:///session` or `Config.for_tests` is used, lat
 
 **Network auto-setup**: `create_instance` and `run_instance` now automatically set up the `mgmt-nogw` management network and activate NAT networks as needed — no separate `bootstrap_host` invocation is required. `bootstrap_host` remains useful for first-time setup of keys and base images.
 
+**Libvirt connectivity check**: Before any VM operation, latita verifies the configured libvirt URI is reachable. If `qemu:///system` is unavailable (no socket, no sudo, connection refused), `create_instance` and `run_instance` fail with a clear message: `Cannot connect to libvirt at qemu:///system. Set LIBVIRT_DEFAULT_URI=qemu:///session to use user-level libvirt without sudo, or ensure the system libvirtd daemon is running and sudo is configured.`
+
 ### Why Python (not Rust)
 
 Latita is a CLI orchestrator, not a VMM. The actual runtime is spent waiting on:
