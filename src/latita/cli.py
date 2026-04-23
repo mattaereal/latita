@@ -141,23 +141,10 @@ def _menu_capsule_apply() -> None:
 
 @app.command(name="menu")
 def menu_cmd() -> None:
-    """Interactive menu for VM management."""
-    get_config().ensure_dirs()
-    from .prompts import menu_loop
-
-    menu_loop(
-        on_create=lambda: _interactive_create(level="simple"),
-        on_run=lambda: _interactive_run(),
-        on_list=lambda: list_instances(),
-        on_start=_menu_start,
-        on_stop=_menu_stop,
-        on_destroy=_menu_destroy,
-        on_ssh=_menu_ssh,
-        on_connect=_menu_connect,
-        on_capsule_apply=_menu_capsule_apply,
-        on_bootstrap=lambda: bootstrap_host(),
-        on_doctor=lambda: doctor(),
-    )
+        '''Launch the TUI dashboard (live VM monitoring, keyboard shortcuts).'''
+        from .tui import Dashboard
+        app_instance = Dashboard()
+        app_instance.run()
 
 
 def _build_overrides(
