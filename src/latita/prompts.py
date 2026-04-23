@@ -342,7 +342,7 @@ def menu_loop(
     from questionary import Choice
     choices: list[Any] = [Choice("← Quit", value="← Quit")]
     for i, label in enumerate(top_labels, 1):
-        choices.append(Choice(label, value=label, shortcut=str(i)))
+        choices.append(Choice(label, value=label, shortcut_key=str(i)))
     while True:
         result = questionary.select("Latita Menu", choices=choices).ask()  # type: ignore[misc]
         if result is None or result == "← Quit":
