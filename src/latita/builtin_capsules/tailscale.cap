@@ -5,9 +5,13 @@ compatibility:
 
 provision:
   packages:
-    - tailscale
+    - curl
   root_commands:
-    - systemctl enable --now tailscaled
+    - |
+      curl -fsSL https://pkgs.tailscale.com/stable/fedora/tailscale.repo \
+        -o /etc/yum.repos.d/tailscale.repo
+      dnf -y install tailscale
+      systemctl enable --now tailscaled
   user_commands:
     - |
       echo "Tailscale installed. Run: sudo tailscale up --authkey <YOUR_KEY>"

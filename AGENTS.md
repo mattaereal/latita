@@ -86,11 +86,14 @@ For a CLI that orchestrates libvirt/QEMU, Python is the right trade-off.
 ### Tests
 
 Run `python -m py_compile src/latita/*.py` for a quick smoke check.
-Run `.venv3/bin/python -m pytest tests/` for the full suite (191 tests including real VM lifecycle, capsule dependency resolution, cloud-init provision merging, and end-to-end SSH to a live Fedora VM).
+Run `.venv3/bin/python -m pytest tests/` for the full suite (195 tests including real VM lifecycle, capsule dependency resolution, cloud-init provision merging, end-to-end SSH to a live Fedora VM, and heavy capsule integration tests).
+
+### Known bugs fixed
+
+- **dnf package block `+` artifact**: `_package_install_block` in `cloudinit.py` previously joined package names with ` \\n+      `, causing literal `+` arguments to be passed to `dnf install`. This caused all multi-package installs to fail with "No match for argument: +". Fixed by removing the stray `+` characters from the join string.
 
 ### Future work
 
-- **Heavy capsule integration tests**: Add tests that create real VMs with each capsule and verify packages are actually installed (requires internet, 5+ minutes per capsule).
 - **Snapshot / clone support**: `latita snapshot <name>` and `latita clone <name> <new-name>` using `qemu-img` backing chains.
 - **Template marketplace**: Share templates via a Git-based registry or simple HTTP index.
 - **TUI dashboard**: A `textual` or `rich` live view of running VMs with resource usage.

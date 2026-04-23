@@ -416,3 +416,159 @@ class TestCapsuleProvision:
         assert "claude-code" in ud or "anthropic" in ud
         assert "kimi-cli" in ud or "kimi" in ud
         destroy_instance(name)
+
+
+class TestCapsuleHeavyIntegration:
+    """Heavy tests that create real VMs and verify capsule packages via SSH.
+
+    Each test creates a Fedora VM, waits for cloud-init to finish, then SSHs
+    into the VM to verify the capsule's packages are actually installed.
+    These are marked ``slow`` and require internet access inside the VM.
+    """
+
+    def _create_and_wait_for_ssh(self, cfg: Config, name: str, capsule_names: list[str]) -> tuple[str, str]:
+        """Create a VM with capsules, start it, and wait for SSH to accept connections.
+
+        Returns (forwarded_port, ssh_key_path).
+        """
+        overrides = {
+            "base_image": cfg.default_base_name,
+            "ephemeral": {"transient": False, "destroy_on_stop": False},
+            "memory": 2048,
+            "cpus": 2,
+            "disk_size": "10G",
+            "network": {"mode": "user"},
+            "security": {"no_guest_agent": False},
+            "capsules": capsule_names,
+        }
+        create_instance("headless", name=name, overrides=overrides)
+        start_instance(name)
+
+        # Wait for guest agent to report IP (signals cloud-init finished boot)
+        _wait_for_vm_ip(name, timeout=180)
+
+        env = read_instance_env(name)
+        forwarded_port = env.get("FORWARDED_SSH_PORT")
+        assert forwarded_port, "Expected FORWARDED_SSH_PORT in session mode"
+
+        recipe = read_instance_recipe(name)
+        key = None
+        if recipe:
+            keys = recipe.get("_keys", {})
+            lab_priv = keys.get("lab_privkey_path")
+            if lab_priv and Path(lab_priv).exists():
+                key = lab_priv
+        assert key, "No SSH private key found"
+
+        # Poll until SSH accepts connections
+        user = env.get("GUEST_USER", "dev")
+        start = time.time()
+        while time.time() - start < 300:
+            cp = subprocess.run(
+                [
+                    "ssh",
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "UserKnownHostsFile=/dev/null",
+                    "-o", "ConnectTimeout=5",
+                    "-o", "BatchMode=yes",
+                    "-p", forwarded_port,
+                    "-i", key,
+                    f"{user}@localhost",
+                    "echo ssh-ready",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if cp.returncode == 0 and "ssh-ready" in cp.stdout:
+                break
+            time.sleep(5)
+        else:
+            destroy_instance(name)
+            raise TimeoutError(f"SSH not ready for {name} after 300s")
+
+        return forwarded_port, key
+
+    def _ssh_run(self, port: str, key: str, user: str, command: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "ssh",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "ConnectTimeout=10",
+                "-o", "BatchMode=yes",
+                "-p", port,
+                "-i", key,
+                f"{user}@localhost",
+                command,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def _retry_ssh_command(
+        self,
+        port: str,
+        key: str,
+        user: str,
+        command: str,
+        timeout: int = 300,
+        interval: int = 5,
+    ) -> subprocess.CompletedProcess[str]:
+        """Retry an SSH command until it succeeds or timeout is reached."""
+        start = time.time()
+        last_cp = None
+        while time.time() - start < timeout:
+            cp = self._ssh_run(port, key, user, command)
+            if cp.returncode == 0:
+                return cp
+            last_cp = cp
+            time.sleep(interval)
+        raise AssertionError(
+            f"Command '{command}' did not succeed within {timeout}s. "
+            f"Last rc={last_cp.returncode}, stderr={last_cp.stderr}"
+        )
+
+    @pytest.mark.slow
+    def test_podman_host_installs_podman(self, fedora_cfg):
+        """podman-host capsule installs podman inside the VM."""
+        cfg = fedora_cfg
+        name = "test-f43-podman-heavy"
+        port, key = self._create_and_wait_for_ssh(cfg, name, ["podman-host"])
+        cp = self._retry_ssh_command(port, key, "dev", "podman --version")
+        assert "podman" in cp.stdout.lower()
+        destroy_instance(name)
+
+    @pytest.mark.slow
+    def test_tailscale_installs_tailscale(self, fedora_cfg):
+        """tailscale capsule installs tailscale inside the VM."""
+        cfg = fedora_cfg
+        name = "test-f43-tailscale-heavy"
+        port, key = self._create_and_wait_for_ssh(cfg, name, ["tailscale"])
+        cp = self._retry_ssh_command(port, key, "dev", "tailscale --version || tailscale version")
+        assert "tailscale" in cp.stdout.lower()
+        destroy_instance(name)
+
+    @pytest.mark.slow
+    def test_whisper_installs_build_tools(self, fedora_cfg):
+        """whisper capsule installs git, make, gcc inside the VM."""
+        cfg = fedora_cfg
+        name = "test-f43-whisper-heavy"
+        port, key = self._create_and_wait_for_ssh(cfg, name, ["whisper"])
+        for cmd in ("git --version", "make --version", "gcc --version"):
+            cp = self._retry_ssh_command(port, key, "dev", cmd)
+            assert cp.returncode == 0, f"{cmd} failed: {cp.stderr}"
+        destroy_instance(name)
+
+    @pytest.mark.slow
+    def test_ai_agents_installs_nodejs(self, fedora_cfg):
+        """ai-agents capsule installs nodejs and npm inside the VM."""
+        cfg = fedora_cfg
+        name = "test-f43-ai-heavy"
+        port, key = self._create_and_wait_for_ssh(cfg, name, ["ai-agents"])
+        cp = self._retry_ssh_command(port, key, "dev", "node --version")
+        assert "v" in cp.stdout
+        cp = self._retry_ssh_command(port, key, "dev", "npm --version")
+        assert cp.returncode == 0, f"npm --version failed: {cp.stderr}"
+        destroy_instance(name)

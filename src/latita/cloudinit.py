@@ -29,7 +29,7 @@ def _package_install_block(packages: list[str], package_manager: str = "dnf") ->
         ]
 
     # Default: dnf
-    package_block = (" \\\n+      ").join(packages)
+    package_block = (" \\\n      ").join(packages)
     return [
         "",
         "dnf clean all || true",
