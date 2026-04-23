@@ -64,6 +64,8 @@ If `LIBVIRT_DEFAULT_URI` is `qemu:///session` or `Config.for_tests` is used, lat
 
 **Auto-detection**: `Config.default()` now probes `qemu:///system` at startup. If the socket is absent or connection is refused, it automatically falls back to `qemu:///session` — no env var needed. Set `LIBVIRT_DEFAULT_URI` explicitly to override.
 
+**virt-install and system gi**: `virt-install` depends on `gi` (PyGObject) which is typically installed at the system Python level. When latita runs under `uv run`, the venv's site-packages takes precedence over system site-packages, so `virt-install` would fail to find `gi`. To fix this, `virt_install()` in `libvirt.py` detects the system site-packages path (by probing `/usr/bin/python3`) and injects it via `PYTHONPATH` when calling virt-install. This ensures virt-install works correctly regardless of whether it's invoked via `uv run` or directly.
+
 ### Why Python (not Rust)
 
 Latita is a CLI orchestrator, not a VMM. The actual runtime is spent waiting on:

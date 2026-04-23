@@ -13,15 +13,35 @@ from .utils import need_cmd, run, log_cmd
 def virsh(*args: str, sudo: bool = False, capture: bool = False, check: bool = True):
     cfg = get_config()
     return run(
-        ["virsh", "-c", cfg.libvirt_uri, *args], sudo=sudo, capture=capture, check=check
+        ['virsh', '-c', cfg.libvirt_uri, *args], sudo=sudo, capture=capture, check=check
     )
+
+
+def _system_python_site_packages() -> str:
+    import subprocess, sysconfig
+    for python in ['/usr/bin/python3', '/usr/local/bin/python3']:
+        cp = subprocess.run(
+            [python, '-c', 'import sys; sp=sys.path[-1]; print(sp if sp.endswith(\"site-packages\") else \"\")'],
+            capture_output=True, text=True, timeout=10,
+        )
+        if cp.returncode == 0:
+            path = cp.stdout.strip()
+            if path and Path(path).exists():
+                return path
+    return ''
 
 
 def virt_install(args: list[str]) -> None:
     cfg = get_config()
-    cmd = ["virt-install", "--connect", cfg.libvirt_uri, *args]
+    cmd = ['virt-install', '--connect', cfg.libvirt_uri, *args]
     log_cmd(cmd)
-    run(cmd)
+    import os, subprocess
+    env = dict(os.environ)
+    sys_sp = _system_python_site_packages()
+    if sys_sp:
+        existing = env.get('PYTHONPATH', '')
+        env['PYTHONPATH'] = f'{sys_sp}{os.pathsep}{existing}' if existing else sys_sp
+    subprocess.run(cmd, env=env, check=True)
 
 
 def ensure_network_exists(name: str) -> None:
