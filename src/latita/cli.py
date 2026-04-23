@@ -37,9 +37,12 @@ from .prompts import (
 from .ui import console
 
 app = typer.Typer(
-    help="Latita - Ephemeral libvirt/QEMU lab manager with capsules",
+    help='Latita - Ephemeral libvirt/QEMU lab manager with capsules',
     invoke_without_command=True,
 )
+
+dashboard_app = typer.Typer(help='TUI dashboard for VM management')
+app.add_typer(dashboard_app, name='dashboard')
 
 # Sub-typer for capsules
 capsule_app = typer.Typer(help='Manage capsules', invoke_without_command=True)
@@ -521,6 +524,18 @@ def template_generate_cmd(
         raise typer.Exit()
     write_yaml(output, recipe)
     console.print(f'[green]Template written to {output}[/green]')
+
+
+# ---------------------------------------------------------------------------
+# Dashboard command
+# ---------------------------------------------------------------------------
+
+@dashboard_app.command(name='run')
+def dashboard_run_cmd() -> None:
+    '''Launch the TUI dashboard (htop-like, live VM monitoring).'''
+    from .tui import Dashboard
+    app_instance = Dashboard()
+    app_instance.run()
 
 
 # ---------------------------------------------------------------------------
