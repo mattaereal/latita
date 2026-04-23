@@ -58,6 +58,8 @@ If `LIBVIRT_DEFAULT_URI` is `qemu:///session` or `Config.for_tests` is used, lat
 
 **Cloud-init in session mode**: Latita builds a persistent NoCloud ISO with `xorriso` (label `cidata`) and attaches it as a CD-ROM disk. This is more reliable than `virt-install --cloud-init`, whose temporary ISO was sometimes missing by the time the guest booted in `qemu:///session` mode. The test suite includes a real end-to-end SSH test (`test_real_ssh_to_vm_executes_command`) that verifies cloud-init creates the `dev` user, installs `openssh-server`, and enables `sshd`.
 
+**Network auto-setup**: `create_instance` and `run_instance` now automatically set up the `mgmt-nogw` management network and activate NAT networks as needed — no separate `bootstrap_host` invocation is required. `bootstrap_host` remains useful for first-time setup of keys and base images.
+
 ### Why Python (not Rust)
 
 Latita is a CLI orchestrator, not a VMM. The actual runtime is spent waiting on:

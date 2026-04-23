@@ -272,8 +272,6 @@ def bootstrap_host() -> None:
     if not cfg.is_session:
         need_cmd("setfacl")
     cfg.ensure_dirs()
-    if not cfg.is_session:
-        grant_qemu_path_access()
 
     console.print(f"  [green]✓[/green] Root: {cfg.root_dir}")
     console.print(f"  [green]✓[/green] Keys: {cfg.keys_dir}")
@@ -404,6 +402,36 @@ def _download_base(name: str, url: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Host network setup helpers
+# ---------------------------------------------------------------------------
+
+def _ensure_host_networks(
+    cfg,
+    net_mode: str,
+    nat_network: str = None,
+) -> None:
+    if cfg.is_session:
+        return
+
+    grant_qemu_path_access()
+
+    if net_mode not in ("isolated", "none"):
+        xml_path = write_mgmt_network_xml(cfg)
+        if not network_exists(cfg.net_name):
+            run(["virsh", "-c", cfg.libvirt_uri, "net-define", str(xml_path)], sudo=True)
+            console.print(f"  [green]\u2713[/green] Defined network: {cfg.net_name}")
+        if not network_is_active(cfg.net_name):
+            run(["virsh", "-c", cfg.libvirt_uri, "net-start", cfg.net_name], sudo=True)
+            console.print(f"  [green]\u2713[/green] Started network: {cfg.net_name}")
+        run(["virsh", "-c", cfg.libvirt_uri, "net-autostart", cfg.net_name], sudo=True)
+        console.print(f"  [green]\u2713[/green] Network autostart enabled")
+
+    if net_mode == "nat" and nat_network:
+        ensure_network_active(nat_network)
+
+
+
+# ---------------------------------------------------------------------------
 # Instance creation
 # ---------------------------------------------------------------------------
 
@@ -434,9 +462,6 @@ def create_instance(
 
     need_cmd("qemu-img", "virt-install", "virsh")
     cfg.ensure_dirs()
-    if not cfg.is_session:
-        grant_qemu_path_access()
-        ensure_network_exists(cfg.net_name)
 
     # Networking
     net = recipe["network"]
@@ -458,6 +483,8 @@ def create_instance(
         else:
             net_mode = "direct"
 
+
+    _ensure_host_networks(cfg, net_mode, nat_network)
     if net_mode in ("isolated", "none"):
         pass  # no host-side setup needed
     elif net_mode == "direct":
@@ -766,7 +793,8 @@ def run_instance(
     # Force ephemeral settings
     recipe["ephemeral"]["transient"] = True
     recipe["ephemeral"]["destroy_on_stop"] = False
-    recipe["network"]["mode"] = "user" if cfg.is_session else recipe["network"].get("mode", "isolated")
+    if cfg.is_session:
+        recipe["network"]["mode"] = "user"
 
     name = recipe.get("name") or _suggest_name(recipe["profile"])
     validate_name(name)
@@ -778,8 +806,8 @@ def run_instance(
 
     need_cmd("qemu-img", "virt-install", "virsh")
     cfg.ensure_dirs()
-    if not cfg.is_session:
-        grant_qemu_path_access()
+    net = recipe["network"]
+    _ensure_host_networks(cfg, net["mode"], net.get("nat_network"))
 
     # Use a temp overlay that will be deleted after
     import tempfile
