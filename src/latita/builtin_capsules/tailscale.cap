@@ -1,0 +1,20 @@
+description: Tailscale mesh VPN
+compatibility:
+  profiles: [headless, desktop]
+  os_family: [fedora, ubuntu]
+
+provision:
+  packages:
+    - tailscale
+  root_commands:
+    - systemctl enable --now tailscaled
+  user_commands:
+    - |
+      echo "Tailscale installed. Run: sudo tailscale up --authkey <YOUR_KEY>"
+      echo "Or: sudo tailscale up to authenticate interactively"
+
+live:
+  user: root
+  commands:
+    - systemctl start tailscaled || true
+    - tailscale status 2>/dev/null || echo "Run: tailscale up --authkey <KEY>"

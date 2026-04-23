@@ -84,9 +84,9 @@ class TestLiveCommands:
 
 class TestResolve:
     def test_resolve_builtin(self):
-        # code-server exists as builtin
+        # code-server exists as builtin and depends on podman-host
         resolved = resolve_capsules(["code-server"], profile="headless", os_family="fedora")
-        assert len(resolved) == 1
+        assert len(resolved) == 2  # podman-host + code-server
 
     def test_resolve_incompatible(self):
         with pytest.raises(Exception):
@@ -101,3 +101,77 @@ class TestListCompatible:
     def test_filter_by_profile(self):
         caps = list_compatible_capsules(profile="headless")
         assert "code-server" in caps
+
+
+class TestDependsOn:
+    def test_single_dependency_resolved(self):
+        # code-server depends on podman-host
+        resolved = resolve_capsules(["code-server"], profile="headless", os_family="fedora")
+        names = [c.get("description", "") for c in resolved]
+        # podman-host should come before code-server
+        assert any("podman" in n.lower() for n in names)
+        assert any("code-server" in n.lower() for n in names)
+
+    def test_dependency_deduplication(self):
+        # Requesting both podman-host and code-server should not duplicate podman-host
+        resolved = resolve_capsules(
+            ["podman-host", "code-server"],
+            profile="headless",
+            os_family="fedora",
+        )
+        descs = [c.get("description", "").lower() for c in resolved]
+        # Both capsules mention "podman" in their descriptions; check that
+        # podman-host itself appears only once
+        host_count = sum(1 for d in descs if "podman-host" in d or "rootless containers" in d)
+        assert host_count == 1
+        # Total should be exactly 2 (podman-host + code-server)
+        assert len(resolved) == 2
+
+    def test_chain_dependency(self):
+        # open-webui depends on ollama
+        resolved = resolve_capsules(
+            ["open-webui"],
+            profile="headless",
+            os_family="fedora",
+        )
+        descs = [c.get("description", "") for c in resolved]
+        assert any("ollama" in d.lower() for d in descs)
+        assert any("webui" in d.lower() for d in descs)
+
+    def test_cycle_detection(self):
+        # Create a fake cycle by temporarily mocking load_capsule
+        from unittest.mock import patch
+
+        def fake_load(name):
+            return {
+                "a": {"description": "A", "depends_on": ["b"]},
+                "b": {"description": "B", "depends_on": ["a"]},
+            }[name]
+
+        with patch("latita.capsules.load_capsule", fake_load):
+            with pytest.raises(Exception) as exc_info:
+                resolve_capsules(["a"])
+            assert "cycle" in str(exc_info.value).lower()
+
+    def test_dependency_order(self):
+        # Dependencies should appear before dependents in the resolved list
+        resolved = resolve_capsules(
+            ["code-server"],
+            profile="headless",
+            os_family="fedora",
+        )
+        descs = [c.get("description", "") for c in resolved]
+        podman_idx = next(i for i, d in enumerate(descs) if "podman" in d.lower())
+        code_idx = next(i for i, d in enumerate(descs) if "code-server" in d.lower())
+        assert podman_idx < code_idx
+
+    def test_ai_agents_resolves_all_deps(self):
+        resolved = resolve_capsules(
+            ["ai-agents"],
+            profile="headless",
+            os_family="fedora",
+        )
+        descs = [c.get("description", "").lower() for c in resolved]
+        assert any("hermes" in d for d in descs)
+        assert any("openclaw" in d for d in descs)
+        assert any("all major ai" in d for d in descs)

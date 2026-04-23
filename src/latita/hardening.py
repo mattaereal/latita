@@ -105,11 +105,18 @@ def build_no_agent_args() -> list[str]:
     return ["--channel", "none"]
 
 
+def build_agent_args() -> list[str]:
+    """Return virt-install args that enable qemu-guest-agent channel."""
+    return ["--channel", "unix,target_type=virtio,name=org.qemu.guest_agent.0"]
+
+
 def apply_hardening_to_args(
     profile: SecurityProfile, args: list[str], *, vm_name: str = ""
 ) -> list[str]:
     if profile.no_guest_agent:
         args = [*args, *build_no_agent_args()]
+    else:
+        args = [*args, *build_agent_args()]
     if profile.nwfilter_drop_all or profile.allow_hosts:
         filter_name = f"{vm_name}-egress" if vm_name else "latita-egress"
         xml = build_nwfilter_xml(filter_name, profile.allow_hosts, drop_all=profile.nwfilter_drop_all)

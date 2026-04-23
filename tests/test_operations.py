@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -49,6 +50,16 @@ class TestNormalizeTemplate:
         assert norm["security"]["selinux"] is True
         assert norm["security"]["no_guest_agent"] is True
         assert norm["security"]["restrict_network"] is False
+
+    def test_nat_network_default(self):
+        data = {"profile": "headless"}
+        norm = normalize_template(data)
+        assert norm["network"]["mode"] == "nat"
+
+    def test_isolated_network_override(self):
+        data = {"profile": "headless", "network": {"mode": "isolated"}}
+        norm = normalize_template(data)
+        assert norm["network"]["mode"] == "isolated"
 
 
 class TestDeepUpdate:
@@ -136,3 +147,86 @@ class TestBuildRecipe:
         recipe = build_recipe("headless")
         assert "_keys" in recipe
         assert recipe["_keys"]["host_pubkey_path"]
+
+    def test_capsule_dependencies_resolved(self, isolated_config):
+        recipe = build_recipe("headless", capsule_names=["code-server"])
+        resolved = recipe["_resolved_capsules"]
+        descriptions = [c.get("description", "").lower() for c in resolved]
+        assert any("podman" in d for d in descriptions)
+        assert any("code-server" in d for d in descriptions)
+
+    def test_capsule_dependency_order_in_recipe(self, isolated_config):
+        recipe = build_recipe("headless", capsule_names=["code-server"])
+        resolved = recipe["_resolved_capsules"]
+        descriptions = [c.get("description", "").lower() for c in resolved]
+        podman_idx = next(i for i, d in enumerate(descriptions) if "podman" in d)
+        code_idx = next(i for i, d in enumerate(descriptions) if "code-server" in d)
+        assert podman_idx < code_idx
+
+    def test_user_data_includes_capsule_provisions(self, isolated_config):
+        from latita.cloudinit import build_user_data
+        from latita.operations import _osinfo_for_recipe, _package_manager_for_recipe
+
+        recipe = build_recipe("headless", capsule_names=["podman-host"])
+        keys = recipe["_keys"]
+        user_data = build_user_data(
+            profile=recipe["profile"],
+            guest_user=recipe["guest_user"],
+            host_pubkey="fake-host-key",
+            lab_pubkey="fake-lab-key",
+            lab_privkey=None,
+            login_hash="",
+            provision=recipe["provision"],
+            capsule_provisions=[
+                c.get("provision", {}) for c in recipe.get("_resolved_capsules", [])
+            ],
+            passwordless_sudo=recipe["passwordless_sudo"],
+            package_manager=_package_manager_for_recipe(recipe),
+        )
+        assert "podman" in user_data
+
+
+class TestDiscoverLatestFedoraUrl:
+    @patch("latita.operations.urllib.request.urlopen")
+    def test_returns_latest_from_html(self, mock_urlopen):
+        html = (
+            '<tr><td><a href="Fedora-Cloud-Base-Generic-43-1.3.x86_64.qcow2">file</a></td></tr>'
+            '<tr><td><a href="Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2">file</a></td></tr>'
+        )
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = html.encode()
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        from latita.operations import _discover_latest_fedora_url
+
+        result = _discover_latest_fedora_url(
+            "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.3.x86_64.qcow2"
+        )
+        assert result is not None
+        assert result.endswith("Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2")
+
+    @patch("latita.operations.urllib.request.urlopen")
+    def test_returns_none_when_no_matches(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"<html><body>no files here</body></html>"
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        from latita.operations import _discover_latest_fedora_url
+
+        result = _discover_latest_fedora_url(
+            "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.3.x86_64.qcow2"
+        )
+        assert result is None
+
+    @patch("latita.operations.urllib.request.urlopen")
+    def test_returns_none_on_network_error(self, mock_urlopen):
+        mock_urlopen.side_effect = Exception("connection refused")
+
+        from latita.operations import _discover_latest_fedora_url
+
+        result = _discover_latest_fedora_url(
+            "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.3.x86_64.qcow2"
+        )
+        assert result is None

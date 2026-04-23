@@ -2,10 +2,9 @@ description: Run code-server via podman
 compatibility:
   profiles: [headless, desktop]
   os_family: [fedora, ubuntu]
+depends_on: [podman-host]
 
 provision:
-  packages: [podman]
-  root_commands: []
   user_commands:
     - |
       podman rm -f code-server >/dev/null 2>&1 || true

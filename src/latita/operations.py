@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import datetime
+import re
 import shutil
 import subprocess
+import urllib.request
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,7 @@ from .libvirt import (
     define_network,
     ensure_network_active,
     ensure_network_exists,
+    get_vm_ip_addresses,
     get_vm_interfaces,
     get_vm_state,
     get_vm_wan_ip,
@@ -220,9 +223,12 @@ def _deep_update(base: dict[str, Any], override: dict[str, Any]) -> None:
 def bootstrap_host() -> None:
     cfg = get_config()
     console.print("Bootstrapping latita...\n")
-    need_cmd("virsh", "setfacl", "ssh-keygen", "qemu-img")
+    need_cmd("virsh", "ssh-keygen", "qemu-img")
+    if not cfg.is_session:
+        need_cmd("setfacl")
     cfg.ensure_dirs()
-    grant_qemu_path_access()
+    if not cfg.is_session:
+        grant_qemu_path_access()
 
     console.print(f"  [green]✓[/green] Root: {cfg.root_dir}")
     console.print(f"  [green]✓[/green] Keys: {cfg.keys_dir}")
@@ -238,35 +244,38 @@ def bootstrap_host() -> None:
         create_lab_key("lab1")
     console.print(f"  [green]✓[/green] Lab key: {lab_key}")
 
-    # Management network
-    xml_path = write_mgmt_network_xml(cfg)
-    if not network_exists(cfg.net_name):
-        run(["virsh", "-c", cfg.libvirt_uri, "net-define", str(xml_path)], sudo=True)
-        console.print(f"  [green]✓[/green] Defined network: {cfg.net_name}")
-    if not network_is_active(cfg.net_name):
-        run(["virsh", "-c", cfg.libvirt_uri, "net-start", cfg.net_name], sudo=True)
-        console.print(f"  [green]✓[/green] Started network: {cfg.net_name}")
-    run(["virsh", "-c", cfg.libvirt_uri, "net-autostart", cfg.net_name], sudo=True)
-    console.print(f"  [green]✓[/green] Network autostart enabled")
+    if not cfg.is_session:
+        # Management network
+        xml_path = write_mgmt_network_xml(cfg)
+        if not network_exists(cfg.net_name):
+            run(["virsh", "-c", cfg.libvirt_uri, "net-define", str(xml_path)], sudo=True)
+            console.print(f"  [green]✓[/green] Defined network: {cfg.net_name}")
+        if not network_is_active(cfg.net_name):
+            run(["virsh", "-c", cfg.libvirt_uri, "net-start", cfg.net_name], sudo=True)
+            console.print(f"  [green]✓[/green] Started network: {cfg.net_name}")
+        run(["virsh", "-c", cfg.libvirt_uri, "net-autostart", cfg.net_name], sudo=True)
+        console.print(f"  [green]✓[/green] Network autostart enabled")
 
-    # Default NAT network
-    if not network_exists("default"):
-        xml = create_network_xml(
-            name="default",
-            mode="nat",
-            ip_address="192.168.122.1",
-            netmask="255.255.255.0",
-            dhcp_start="192.168.122.100",
-            dhcp_end="192.168.122.200",
-        )
-        p = cfg.net_dir / "default.xml"
-        p.write_text(xml)
-        define_network(p)
-        start_network("default")
-        autostart_network("default")
-        console.print("  [green]✓[/green] Created NAT network: default")
+        # Default NAT network
+        if not network_exists("default"):
+            xml = create_network_xml(
+                name="default",
+                mode="nat",
+                ip_address="192.168.122.1",
+                netmask="255.255.255.0",
+                dhcp_start="192.168.122.100",
+                dhcp_end="192.168.122.200",
+            )
+            p = cfg.net_dir / "default.xml"
+            p.write_text(xml)
+            define_network(p)
+            start_network("default")
+            autostart_network("default")
+            console.print("  [green]✓[/green] Created NAT network: default")
+        else:
+            console.print("  [green]✓[/green] NAT network: default")
     else:
-        console.print("  [green]✓[/green] NAT network: default")
+        console.print("  [dim]Session mode: skipped network setup[/dim]")
 
     # Base image
     base_img = cfg.base_dir / cfg.default_base_name
@@ -305,13 +314,45 @@ def init_base(name: str | None = None, url: str | None = None) -> None:
     _download_base(info["filename"], info["url"])
 
 
+def _discover_latest_fedora_url(url: str) -> str | None:
+    """If a Fedora Cloud image URL 404s, scrape the directory listing for the latest Generic qcow2."""
+    # Derive the directory URL from the file URL
+    dir_url = url.rsplit("/", 1)[0] + "/"
+    try:
+        with urllib.request.urlopen(dir_url, timeout=20) as resp:  # noqa: S310
+            html = resp.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+    # Extract filenames like Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2
+    matches = re.findall(
+        r'href="(Fedora-Cloud-Base-Generic-\d+(?:\.\d+)*-[\d.]+\.x86_64\.qcow2)"',
+        html,
+    )
+    if not matches:
+        return None
+    # Sort by version string and pick the latest
+    matches.sort(key=lambda s: [int(x) for x in re.findall(r"\d+", s)])
+    return dir_url + matches[-1]
+
+
 def _download_base(name: str, url: str) -> None:
     cfg = get_config()
     dst = cfg.base_dir / name
     if dst.exists():
         console.print(f"Base image already exists: {dst}", style="green")
         return
-    run(["curl", "-L", "--fail", "-o", str(dst), url])
+    try:
+        run(["curl", "-L", "--fail", "-o", str(dst), url])
+    except subprocess.CalledProcessError as exc:
+        if exc.returncode == 22:  # curl --fail 404
+            discovered = _discover_latest_fedora_url(url)
+            if discovered and discovered != url:
+                console.print(f"[yellow]Base image URL 404; retrying with discovered URL:[/yellow] {discovered}")
+                run(["curl", "-L", "--fail", "-o", str(dst), discovered])
+            else:
+                raise
+        else:
+            raise
     dst.chmod(0o444)
     run(["qemu-img", "info", str(dst)])
     console.print(f"Downloaded: {dst}", style="green")
@@ -348,8 +389,9 @@ def create_instance(
 
     need_cmd("qemu-img", "virt-install", "virsh")
     cfg.ensure_dirs()
-    grant_qemu_path_access()
-    ensure_network_exists(cfg.net_name)
+    if not cfg.is_session:
+        grant_qemu_path_access()
+        ensure_network_exists(cfg.net_name)
 
     # Networking
     net = recipe["network"]
@@ -357,7 +399,9 @@ def create_instance(
     nat_network = net["nat_network"]
     uplink = net.get("uplink")
 
-    if net_mode == "auto":
+    if cfg.is_session:
+        net_mode = "user"
+    elif net_mode == "auto":
         from .libvirt import detect_default_uplink
         uplink = uplink or detect_default_uplink()
         if not uplink:
@@ -369,7 +413,9 @@ def create_instance(
         else:
             net_mode = "direct"
 
-    if net_mode == "direct":
+    if net_mode in ("isolated", "none"):
+        pass  # no host-side setup needed
+    elif net_mode == "direct":
         if not uplink or not iface_exists(uplink):
             raise typer.BadParameter(f"uplink does not exist: {uplink}")
         if iface_is_wireless(uplink):
@@ -378,8 +424,10 @@ def create_instance(
         if not nat_network:
             raise typer.BadParameter("nat_network required for nat mode")
         ensure_network_active(nat_network)
+    elif net_mode == "user":
+        pass  # no host-side setup needed
     else:
-        raise typer.BadParameter("network mode must be nat, direct, or auto")
+        raise typer.BadParameter("network mode must be isolated, nat, direct, auto, or user")
 
     inst.mkdir(parents=True)
     overlay = inst / f"{recipe['name']}.qcow2"
@@ -490,11 +538,16 @@ def _run_create(
         args.extend(["--graphics", "none"])
 
     # Networking
-    if net_mode == "direct":
+    if net_mode == "isolated" or net_mode == "none":
+        args.extend(["--network", "none"])
+    elif net_mode == "direct":
         args.extend(["--network", f"type=direct,source={uplink},source_mode=private,model=virtio,mac={wan_mac}"])
+    elif net_mode == "user":
+        args.extend(["--network", f"type=user,model=virtio,mac={wan_mac}"])
     else:
         args.extend(["--network", f"network={nat_network},model=virtio,mac={wan_mac}"])
-    args.extend(["--network", f"network={cfg.net_name},model=virtio,mac={mgmt_mac}"])
+    if not cfg.is_session and net_mode not in ("isolated", "none"):
+        args.extend(["--network", f"network={cfg.net_name},model=virtio,mac={mgmt_mac}"])
 
     # Security hardening
     sec = recipe["security"]
@@ -640,6 +693,135 @@ def destroy_instance(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# One-shot ephemeral runner (like smolvm machine run)
+# ---------------------------------------------------------------------------
+
+def run_instance(
+    template_name: str,
+    command: list[str] | None = None,
+    overrides: dict[str, Any] | None = None,
+    capsule_names: list[str] | None = None,
+) -> None:
+    """Create a transient, one-shot VM with no persistent state."""
+    cfg = get_config()
+    recipe = build_recipe(template_name, overrides=overrides, capsule_names=capsule_names)
+
+    # Force ephemeral settings
+    recipe["ephemeral"]["transient"] = True
+    recipe["ephemeral"]["destroy_on_stop"] = False
+    recipe["network"]["mode"] = "user" if cfg.is_session else recipe["network"].get("mode", "isolated")
+
+    name = recipe.get("name") or _suggest_name(recipe["profile"])
+    validate_name(name)
+    recipe["name"] = name
+
+    base_img = cfg.base_dir / recipe["base_image"]
+    if not base_img.exists():
+        raise typer.BadParameter(f"base image not found: {base_img}")
+
+    need_cmd("qemu-img", "virt-install", "virsh")
+    cfg.ensure_dirs()
+    if not cfg.is_session:
+        grant_qemu_path_access()
+
+    # Use a temp overlay that will be deleted after
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="latita-run-") as td:
+        overlay = Path(td) / f"{name}.qcow2"
+        run(["qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", str(base_img), str(overlay)])
+        run(["qemu-img", "resize", str(overlay), recipe["disk_size"]])
+
+        keys = recipe["_keys"]
+        host_pubkey = read_text(Path(keys["host_pubkey_path"]))
+        lab_pubkey = read_text(Path(keys["lab_pubkey_path"])) if keys["lab_pubkey_path"] else ""
+
+        capsule_provisions = [
+            capsules.capsule_provision_fragment(c)
+            for c in recipe.get("_resolved_capsules", [])
+        ]
+
+        pkg_mgr = _package_manager_for_recipe(recipe)
+        osinfo = _osinfo_for_recipe(recipe)
+
+        user_data = build_user_data(
+            profile=recipe["profile"],
+            guest_user=recipe["guest_user"],
+            host_pubkey=host_pubkey,
+            lab_pubkey=lab_pubkey,
+            lab_privkey=Path(keys["lab_privkey_path"]) if keys.get("lab_privkey_path") else None,
+            login_hash="",
+            provision=recipe["provision"],
+            capsule_provisions=capsule_provisions,
+            passwordless_sudo=recipe["passwordless_sudo"],
+            package_manager=pkg_mgr,
+        )
+
+        wan_mac = random_mac()
+        net = recipe["network"]
+        net_cfg = build_network_config(wan_mac, random_mac(), net["mgmt_ip"], net["mgmt_prefix"])
+
+        ud_path = Path(td) / "user-data.yaml"
+        nc_path = Path(td) / "network-config.yaml"
+        ud_path.write_text(user_data)
+        nc_path.write_text(net_cfg)
+
+        args = [
+            "--name", name,
+            "--memory", str(recipe["memory"]),
+            "--vcpus", str(recipe["cpus"]),
+            "--cpu", "host-passthrough",
+            "--import",
+            "--osinfo", osinfo,
+            "--disk", f"path={overlay},format=qcow2,bus=virtio,discard=unmap",
+            "--cloud-init", f"user-data={ud_path},network-config={nc_path},disable=on",
+            "--rng", "/dev/urandom",
+            "--noautoconsole",
+            "--transient",
+        ]
+
+        if recipe["profile"] == "desktop":
+            args.extend([
+                "--graphics", "spice,listen=127.0.0.1",
+                "--video", "qxl",
+                "--channel", "spicevmc",
+            ])
+        else:
+            args.extend(["--graphics", "none"])
+
+        net_mode = net["mode"]
+        if net_mode in ("isolated", "none"):
+            args.extend(["--network", "none"])
+        elif net_mode == "user":
+            args.extend(["--network", f"type=user,model=virtio,mac={wan_mac}"])
+        elif net_mode == "direct" and net.get("uplink"):
+            args.extend(["--network", f"type=direct,source={net['uplink']},source_mode=private,model=virtio,mac={wan_mac}"])
+        else:
+            nat_network = net.get("nat_network", "default")
+            args.extend(["--network", f"network={nat_network},model=virtio,mac={wan_mac}"])
+        if not cfg.is_session and net_mode not in ("isolated", "none"):
+            args.extend(["--network", f"network={cfg.net_name},model=virtio,mac={random_mac()}"])
+
+        sec = recipe["security"]
+        profile = SecurityProfile.from_dict(sec)
+        args = apply_hardening_to_args(profile, args, vm_name=name)
+
+        console.print(f"Running transient {name}...", style="cyan")
+        virt_install(args)
+
+        # If a command was given, wait briefly for boot then exec via SSH?
+        # For now just let the user connect manually, or we can wait for shutdown
+        if command:
+            console.print(f"Transient VM started. Waiting for shutdown...", style="dim")
+            # Wait until domain disappears (transient auto-removes on shutdown)
+            import time
+            while vm_exists(name):
+                time.sleep(1)
+        else:
+            console.print(f"Transient VM {name} is running. Connect with: latita ssh {name}", style="green")
+            console.print(f"It will disappear on shutdown.", style="dim")
+
+
+# ---------------------------------------------------------------------------
 # Revive
 # ---------------------------------------------------------------------------
 
@@ -663,13 +845,17 @@ def revive_instance(name: str) -> None:
     if not overlay.exists():
         raise typer.BadParameter(f"overlay missing: {overlay}")
 
-    ensure_network_exists(cfg.net_name)
-    if spec.get("nat_network"):
-        ensure_network_active(spec["nat_network"])
+    if not cfg.is_session:
+        ensure_network_exists(cfg.net_name)
+        if spec.get("nat_network"):
+            ensure_network_active(spec["nat_network"])
 
     net_mode = spec.get("net_mode", "nat")
     nat_network = spec.get("nat_network", "default")
     uplink = spec.get("uplink")
+
+    if cfg.is_session:
+        net_mode = "user"
 
     wan_mac = spec.get("wan_mac", random_mac())
     mgmt_mac = spec.get("mgmt_mac", random_mac())
@@ -694,11 +880,16 @@ def revive_instance(name: str) -> None:
     else:
         args.extend(["--graphics", "none"])
 
-    if net_mode == "direct" and uplink and iface_exists(uplink):
+    if net_mode in ("isolated", "none"):
+        args.extend(["--network", "none"])
+    elif net_mode == "direct" and uplink and iface_exists(uplink):
         args.extend(["--network", f"type=direct,source={uplink},source_mode=private,model=virtio,mac={wan_mac}"])
+    elif net_mode == "user":
+        args.extend(["--network", f"type=user,model=virtio,mac={wan_mac}"])
     else:
         args.extend(["--network", f"network={nat_network},model=virtio,mac={wan_mac}"])
-    args.extend(["--network", f"network={cfg.net_name},model=virtio,mac={mgmt_mac}"])
+    if not cfg.is_session and net_mode not in ("isolated", "none"):
+        args.extend(["--network", f"network={cfg.net_name},model=virtio,mac={mgmt_mac}"])
 
     sec_dict = recipe.get("security", {})
     profile = SecurityProfile.from_dict(sec_dict)
@@ -719,6 +910,10 @@ def revive_instance(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 def get_vm_ip(name: str) -> str | None:
+    # Prefer dynamic discovery (guest agent, DHCP lease, ARP) over static config
+    addresses = get_vm_ip_addresses(name)
+    if addresses:
+        return addresses[0]["ip"]
     env = read_instance_env(name)
     mgmt_ip = env.get("MGMT_IP")
     if mgmt_ip:

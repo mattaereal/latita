@@ -1,0 +1,21 @@
+description: Open WebUI for Ollama
+compatibility:
+  profiles: [headless, desktop]
+  os_family: [fedora, ubuntu]
+depends_on: [ollama]
+
+provision:
+  packages:
+    - python3-pip
+  user_commands:
+    - |
+      pip3 install --user open-webui
+      mkdir -p /home/{guest_user}/workspace/open-webui
+      echo "Open WebUI installed. Start with: open-webui serve"
+      echo "Or create a systemd user service to auto-start"
+
+live:
+  user: dev
+  commands:
+    - pip3 install --user open-webui
+    - which open-webui || pip3 install --user open-webui

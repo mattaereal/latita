@@ -6,7 +6,7 @@ from typing import Any, Optional
 import typer
 
 from . import capsules as caps_mod
-from .config import get_config, list_capsules, list_latita_templates, load_latita_template
+from .config import get_config, list_capsules, list_latita_templates, load_latita_template, load_project_config, clear_project_config, write_yaml
 from .operations import (
     apply_capsule_live,
     bootstrap_host,
@@ -17,12 +17,23 @@ from .operations import (
     init_base,
     list_instances,
     revive_instance,
+    run_instance,
     scan_instances,
     ssh_instance,
     start_instance,
     stop_instance,
 )
-from .prompts import interactive_create
+from .prompts import (
+    interactive_create_simple,
+    interactive_create_advanced,
+    interactive_create_full,
+    interactive_generate_template,
+    _pick_vm,
+    _pick_running_vm,
+    _pick_stopped_vm,
+    _pick_capsule,
+    prompt_download_base_image,
+)
 from .ui import console
 
 app = typer.Typer(
@@ -47,81 +58,185 @@ def callback(ctx: typer.Context) -> None:
         raise typer.Exit()
 
 
+def _ensure_running(name: str) -> None:
+    """Print disclaimer and start a VM if it is not already running."""
+    entries = {e["name"]: e for e in scan_instances()}
+    if entries.get(name, {}).get("status") != "running":
+        console.print(
+            "[yellow]Sending a command to a stopped VM will start it immediately.[/yellow]"
+        )
+        start_instance(name)
+
+
+def _menu_start() -> None:
+    name = _pick_stopped_vm("Select VM to start")
+    if name:
+        start_instance(name)
+
+
+def _menu_stop() -> None:
+    name = _pick_running_vm("Select VM to stop")
+    if name:
+        stop_instance(name)
+
+
+def _menu_destroy() -> None:
+    name = _pick_vm("Select VM to destroy")
+    if name and typer.confirm(f"Destroy VM '{name}' and shred its disk?", default=False):
+        destroy_instance(name)
+
+
+def _menu_ssh() -> None:
+    name = _pick_running_vm("Select VM to SSH into")
+    if name is None:
+        name = _pick_vm("Select VM (stopped VMs will be started first)")
+    if name:
+        _ensure_running(name)
+        ssh_instance(name)
+
+
+def _menu_connect() -> None:
+    name = _pick_running_vm("Select VM to connect")
+    if name is None:
+        name = _pick_vm("Select VM (stopped VMs will be started first)")
+    if name:
+        _ensure_running(name)
+        connect_instance(name)
+
+
+def _menu_capsule_apply() -> None:
+    name = _pick_running_vm("Select VM for capsule")
+    if name is None:
+        name = _pick_vm("Select VM (stopped VMs will be started first)")
+    if name:
+        _ensure_running(name)
+        capsule = _pick_capsule("Select capsule")
+        if capsule:
+            apply_capsule_live(name, capsule)
+
+
 @app.command(name="menu")
 def menu_cmd() -> None:
     """Interactive menu for VM management."""
     get_config().ensure_dirs()
-    while True:
-        choices = [
-            "create",
-            "list",
-            "start",
-            "stop",
-            "destroy",
-            "ssh",
-            "connect",
-            "capsule apply",
-            "bootstrap",
-            "doctor",
-            "quit",
-        ]
-        try:
-            from .prompts import ask_select
-            choice = ask_select("Menu", choices, default="list")
-        except Exception:
-            break
-        if choice == "quit":
-            break
-        if choice == "create":
-            _interactive_create()
-        elif choice == "list":
-            list_instances()
-        elif choice == "start":
-            name = input("VM name: ").strip()
-            if name:
-                start_instance(name)
-        elif choice == "stop":
-            name = input("VM name: ").strip()
-            if name:
-                stop_instance(name)
-        elif choice == "destroy":
-            name = input("VM name: ").strip()
-            if name and typer.confirm(f"Destroy {name}?", default=False):
-                destroy_instance(name)
-        elif choice == "ssh":
-            name = input("VM name: ").strip()
-            if name:
-                ssh_instance(name)
-        elif choice == "connect":
-            name = input("VM name: ").strip()
-            if name:
-                connect_instance(name)
-        elif choice == "capsule apply":
-            vm = input("VM name: ").strip()
-            cap = input("Capsule name: ").strip()
-            if vm and cap:
-                apply_capsule_live(vm, cap)
-        elif choice == "bootstrap":
-            bootstrap_host()
-        elif choice == "doctor":
-            doctor()
+    from .prompts import menu_loop
+
+    menu_loop(
+        on_create=lambda: _interactive_create(level="simple"),
+        on_run=lambda: _interactive_run(),
+        on_list=lambda: list_instances(),
+        on_start=_menu_start,
+        on_stop=_menu_stop,
+        on_destroy=_menu_destroy,
+        on_ssh=_menu_ssh,
+        on_connect=_menu_connect,
+        on_capsule_apply=_menu_capsule_apply,
+        on_bootstrap=lambda: bootstrap_host(),
+        on_doctor=lambda: doctor(),
+    )
 
 
-def _interactive_create() -> None:
+def _build_overrides(
+    cpus: Optional[int] = None,
+    memory: Optional[int] = None,
+    disk: Optional[str] = None,
+    net: bool = False,
+    allow_host: list[str] | None = None,
+    transient: bool = False,
+    destroy_on_stop: bool = False,
+    max_runs: Optional[int] = None,
+    expires: Optional[int] = None,
+    no_guest_agent: bool = False,
+    no_selinux: bool = False,
+    restrict_network: bool = False,
+) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+    if cpus is not None:
+        overrides["cpus"] = cpus
+    if memory is not None:
+        overrides["memory"] = memory
+    if disk is not None:
+        overrides["disk_size"] = disk
+    if net:
+        overrides.setdefault("network", {})["mode"] = "nat"
+        overrides.setdefault("network", {})["nat_network"] = "default"
+    if allow_host:
+        overrides.setdefault("security", {})["restrict_network"] = True
+        overrides.setdefault("security", {})["allow_hosts"] = list(allow_host)
+    if transient:
+        overrides.setdefault("ephemeral", {})["transient"] = True
+    if destroy_on_stop:
+        overrides.setdefault("ephemeral", {})["destroy_on_stop"] = True
+    if max_runs is not None:
+        overrides.setdefault("ephemeral", {})["max_runs"] = max_runs
+    if expires is not None:
+        overrides.setdefault("ephemeral", {})["expires_after_hours"] = expires
+    if no_guest_agent:
+        overrides.setdefault("security", {})["no_guest_agent"] = False
+    if no_selinux:
+        overrides.setdefault("security", {})["selinux"] = False
+    if restrict_network:
+        overrides.setdefault("security", {})["restrict_network"] = True
+    return overrides
+
+
+def _interactive_create(level: str = "simple") -> None:
     try:
-        recipe = interactive_create()
+        if level == "full":
+            recipe = interactive_create_full()
+        elif level == "advanced":
+            recipe = interactive_create_advanced()
+        else:
+            recipe = interactive_create_simple()
     except typer.Abort:
         console.print("Aborted.", style="yellow")
         return
-    template_name = recipe["profile"]
+    template_name = recipe.get("template_name", recipe["profile"])
     if template_name not in list_latita_templates():
         console.print(f"Template '{template_name}' not found. Creating with defaults...", style="yellow")
-    create_instance(
-        template_name=template_name,
-        name=recipe["name"],
-        capsule_names=recipe.get("capsules", []),
-        overrides=recipe,
-    )
+    try:
+        create_instance(
+            template_name=template_name,
+            name=recipe.get("name"),
+            capsule_names=recipe.get("capsules", []),
+            overrides=recipe,
+        )
+    except typer.BadParameter as exc:
+        if "base image not found" in str(exc):
+            if prompt_download_base_image():
+                create_instance(
+                    template_name=template_name,
+                    name=recipe.get("name"),
+                    capsule_names=recipe.get("capsules", []),
+                    overrides=recipe,
+                )
+        else:
+            raise
+
+
+def _interactive_run() -> None:
+    try:
+        recipe = interactive_create_simple()
+    except typer.Abort:
+        console.print("Aborted.", style="yellow")
+        return
+    template_name = recipe.get("template_name", recipe["profile"])
+    try:
+        run_instance(
+            template_name=template_name,
+            overrides=recipe,
+            capsule_names=recipe.get("capsules", []),
+        )
+    except typer.BadParameter as exc:
+        if "base image not found" in str(exc):
+            if prompt_download_base_image():
+                run_instance(
+                    template_name=template_name,
+                    overrides=recipe,
+                    capsule_names=recipe.get("capsules", []),
+                )
+        else:
+            raise
 
 
 @app.command(name="create")
@@ -129,16 +244,86 @@ def create_cmd(
     template: str = typer.Argument(..., help="Template name (e.g. headless, desktop)"),
     name: Optional[str] = typer.Option(None, "--name", "-n", help="VM name"),
     capsule: list[str] = typer.Option([], "--capsule", "-c", help="Capsule to apply (repeatable)"),
+    cpus: Optional[int] = typer.Option(None, "--cpus", help="Override vCPUs"),
+    memory: Optional[int] = typer.Option(None, "--memory", "-m", help="Override memory (MiB)"),
+    disk: Optional[str] = typer.Option(None, "--disk", "-d", help="Override disk size (e.g. 20G)"),
+    net: bool = typer.Option(False, "--net", help="Enable NAT networking"),
+    allow_host: list[str] = typer.Option([], "--allow-host", help="Allowed egress host (repeatable)"),
     ephemeral: bool = typer.Option(False, "--ephemeral", "-e", help="Destroy on stop"),
     transient: bool = typer.Option(False, "--transient", "-t", help="Libvirt transient"),
+    max_runs: Optional[int] = typer.Option(None, "--max-runs", help="Max start count"),
+    expires: Optional[int] = typer.Option(None, "--expires", help="Expire after N hours"),
+    no_guest_agent: bool = typer.Option(False, "--no-guest-agent", help="Disable qemu-guest-agent"),
+    no_selinux: bool = typer.Option(False, "--no-selinux", help="Disable SELinux hardening"),
+    restrict_network: bool = typer.Option(False, "--restrict-network", help="Restrict outbound network"),
+    advanced: bool = typer.Option(False, "--advanced", help="Interactive advanced mode"),
+    full: bool = typer.Option(False, "--full", help="Interactive full wizard mode"),
 ) -> None:
     """Create a VM from a template."""
-    overrides: dict[str, Any] = {}
-    if ephemeral:
-        overrides.setdefault("ephemeral", {})["destroy_on_stop"] = True
-    if transient:
-        overrides.setdefault("ephemeral", {})["transient"] = True
+    # Check for project-level .latita config
+    project_cfg = load_project_config()
+    clear_project_config()
+
+    if full:
+        _interactive_create(level="full")
+        return
+    if advanced:
+        _interactive_create(level="advanced")
+        return
+
+    overrides = _build_overrides(
+        cpus=cpus,
+        memory=memory,
+        disk=disk,
+        net=net,
+        allow_host=allow_host,
+        transient=transient,
+        destroy_on_stop=ephemeral,
+        max_runs=max_runs,
+        expires=expires,
+        no_guest_agent=no_guest_agent,
+        no_selinux=no_selinux,
+        restrict_network=restrict_network,
+    )
+
+    # Merge project config overrides
+    if project_cfg:
+        from .operations import _deep_update
+        _deep_update(overrides, project_cfg)
+
     create_instance(template, name=name, capsule_names=capsule or None, overrides=overrides)
+
+
+@app.command(name="run")
+def run_cmd(
+    template: str = typer.Argument(..., help="Template name (e.g. headless, desktop)"),
+    command: list[str] = typer.Argument(None, help="Command to run inside the VM"),
+    name: Optional[str] = typer.Option(None, "--name", "-n", help="VM name prefix"),
+    capsule: list[str] = typer.Option([], "--capsule", "-c", help="Capsule to apply (repeatable)"),
+    cpus: Optional[int] = typer.Option(None, "--cpus", help="Override vCPUs"),
+    memory: Optional[int] = typer.Option(None, "--memory", "-m", help="Override memory (MiB)"),
+    disk: Optional[str] = typer.Option(None, "--disk", "-d", help="Override disk size"),
+    net: bool = typer.Option(False, "--net", help="Enable NAT networking"),
+    allow_host: list[str] = typer.Option([], "--allow-host", help="Allowed egress host (repeatable)"),
+    restrict_network: bool = typer.Option(False, "--restrict-network", help="Restrict outbound network"),
+) -> None:
+    """Run a one-shot ephemeral VM (auto-cleaned on shutdown)."""
+    overrides = _build_overrides(
+        cpus=cpus,
+        memory=memory,
+        disk=disk,
+        net=net,
+        allow_host=allow_host,
+        restrict_network=restrict_network,
+    )
+    if name:
+        overrides["name"] = name
+    run_instance(
+        template_name=template,
+        command=command or None,
+        overrides=overrides,
+        capsule_names=capsule or None,
+    )
 
 
 @app.command(name="start")
@@ -267,6 +452,20 @@ def template_show_cmd(name: str) -> None:
     data = load_latita_template(name)
     console.print(f"[bold]{name}.latita[/bold]")
     console.print(data)
+
+
+@template_app.command(name="generate")
+def template_generate_cmd(
+    output: Path = typer.Option(..., "--output", "-o", help="Output file path (e.g. mytemplate.latita)"),
+) -> None:
+    """Interactively generate a new .latita template file."""
+    try:
+        recipe = interactive_generate_template()
+    except typer.Abort:
+        console.print("Aborted.", style="yellow")
+        raise typer.Exit()
+    write_yaml(output, recipe)
+    console.print(f"[green]Template written to {output}[/green]")
 
 
 # ---------------------------------------------------------------------------

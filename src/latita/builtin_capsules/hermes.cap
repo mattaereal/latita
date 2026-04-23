@@ -1,0 +1,19 @@
+description: Hermes agent framework
+compatibility:
+  profiles: [headless, desktop]
+  os_family: [fedora, ubuntu]
+
+provision:
+  packages:
+    - python3-pip
+    - git
+  user_commands:
+    - |
+      pip3 install --user hermes-agent || true
+      echo "Hermes installed. Run: hermes --help"
+
+live:
+  user: dev
+  commands:
+    - pip3 install --user hermes-agent
+    - hermes --help 2>/dev/null || echo "Hermes not available; check pip installation"

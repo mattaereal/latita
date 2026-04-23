@@ -9,6 +9,7 @@ dependencies = [
   "rich>=13.7",
   "questionary>=2.1",
   "pyyaml>=6.0",
+  "click>=8.0",
 ]
 
 [project.scripts]
@@ -28,3 +29,7 @@ package = true
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-v --tb=short"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "very_slow: marks tests as very slow (>5 min, may need network) (deselect with '-m \"not very_slow\"')",
+]

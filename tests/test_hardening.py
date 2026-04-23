@@ -76,10 +76,11 @@ class TestApplyHardening:
         assert "--channel" in args
         assert "none" in args
 
-    def test_no_guest_agent_skipped(self):
+    def test_guest_agent_enabled(self):
         profile = SecurityProfile(no_guest_agent=False)
         args = apply_hardening_to_args(profile, ["--name", "vm"])
-        assert "--channel" not in args
+        assert "--channel" in args
+        assert "org.qemu.guest_agent.0" in " ".join(args)
 
     def test_nwfilter_not_injected_when_no_restrictions(self):
         profile = SecurityProfile(nwfilter_drop_all=False, allow_hosts=[])

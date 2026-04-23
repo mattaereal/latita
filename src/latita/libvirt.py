@@ -159,25 +159,33 @@ def random_mac() -> str:
 
 
 def get_vm_ip_addresses(name: str) -> list[dict[str, str]]:
-    cp = virsh("domifaddr", name, capture=True, check=False)
-    if cp.returncode != 0:
-        return []
-    addresses: list[dict[str, str]] = []
-    for line in cp.stdout.splitlines():
-        line = line.strip()
-        if not line or line.startswith("Name") or line.startswith("-"):
+    """Query VM IP addresses via guest agent, DHCP lease, or ARP table."""
+    for source in ("agent", "lease", "arp"):
+        cp = virsh("domifaddr", name, "--source", source, capture=True, check=False)
+        if cp.returncode != 0:
             continue
-        parts = line.split()
-        if len(parts) >= 4:
-            addresses.append(
-                {
-                    "iface": parts[0],
-                    "mac": parts[1],
-                    "protocol": parts[2],
-                    "ip": parts[3].split("/")[0],
-                }
-            )
-    return addresses
+        addresses: list[dict[str, str]] = []
+        for line in cp.stdout.splitlines():
+            line = line.strip()
+            if not line or line.startswith("Name") or line.startswith("-"):
+                continue
+            parts = line.split()
+            if len(parts) >= 4:
+                ip = parts[3].split("/")[0]
+                # Skip loopback, not-yet-assigned placeholders, and invalid tokens
+                if ip in ("127.0.0.1", "::1", "N/A", "N") or ("." not in ip and ":" not in ip):
+                    continue
+                addresses.append(
+                    {
+                        "iface": parts[0],
+                        "mac": parts[1],
+                        "protocol": parts[2],
+                        "ip": ip,
+                    }
+                )
+        if addresses:
+            return addresses
+    return []
 
 
 def get_vm_interfaces(name: str) -> dict[str, str]:

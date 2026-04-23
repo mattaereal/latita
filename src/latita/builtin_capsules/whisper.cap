@@ -1,0 +1,25 @@
+description: Whisper.cpp for local transcription
+compatibility:
+  profiles: [headless, desktop]
+  os_family: [fedora, ubuntu]
+depends_on: [ollama]
+
+provision:
+  packages:
+    - git
+    - make
+    - gcc
+    - g++
+  user_commands:
+    - |
+      if [ ! -d /home/{guest_user}/whisper.cpp ]; then
+        git clone https://github.com/ggerganov/whisper.cpp.git /home/{guest_user}/whisper.cpp
+        cd /home/{guest_user}/whisper.cpp && make
+      fi
+      echo "Whisper.cpp installed at ~/whisper.cpp"
+      echo "Download a model: ./models/download-ggml-model.sh base.en"
+
+live:
+  user: dev
+  commands:
+    - cd /home/{guest_user}/whisper.cpp && make 2>/dev/null || true

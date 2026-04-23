@@ -93,6 +93,10 @@ class Config:
     def root_marker_path(self) -> Path:
         return self.root_dir / ROOT_MARKER_NAME
 
+    @property
+    def is_session(self) -> bool:
+        return self.libvirt_uri.endswith(":///session")
+
     def ensure_dirs(self) -> None:
         for p in (
             self.root_dir,
@@ -128,7 +132,7 @@ class Config:
         """Create a config isolated to a temporary directory."""
         return cls(
             root_dir=tmp_path,
-            libvirt_uri="qemu:///system",
+            libvirt_uri="qemu:///session",
             default_base_url="",
             default_base_name="test-base.qcow2",
             net_name="test-mgmt",
@@ -168,6 +172,31 @@ def load_yaml(path: Path) -> dict[str, Any]:
         return {}
     data = yaml.safe_load(path.read_text())
     return data if isinstance(data, dict) else {}
+
+
+# ---------------------------------------------------------------------------
+# Project-level .latita config (like a Smolfile)
+# ---------------------------------------------------------------------------
+
+_PROJECT_CONFIG: dict[str, Any] | None = None
+
+
+def load_project_config(cwd: Path | None = None) -> dict[str, Any]:
+    """Load a .latita config file from the current working directory."""
+    global _PROJECT_CONFIG
+    if _PROJECT_CONFIG is not None:
+        return _PROJECT_CONFIG
+    p = (cwd or Path.cwd()) / ".latita"
+    if p.exists():
+        _PROJECT_CONFIG = load_yaml(p)
+    else:
+        _PROJECT_CONFIG = {}
+    return _PROJECT_CONFIG
+
+
+def clear_project_config() -> None:
+    global _PROJECT_CONFIG
+    _PROJECT_CONFIG = None
 
 
 def write_yaml(path: Path, data: dict[str, Any]) -> None:
@@ -258,11 +287,11 @@ def load_capsule(name: str, cfg: Config | None = None) -> dict[str, Any]:
 BASE_IMAGES = {
     "Fedora 43 Cloud": {
         "filename": "fedora43-base.qcow2",
-        "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-43-1.3.qcow2",
+        "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2",
     },
     "Fedora 42 Cloud": {
         "filename": "fedora42-base.qcow2",
-        "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-42-1.1.qcow2",
+        "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-42-1.1.x86_64.qcow2",
     },
     "Ubuntu 24.04 LTS Cloud": {
         "filename": "ubuntu2404-base.qcow2",

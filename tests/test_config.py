@@ -26,7 +26,7 @@ class TestConfig:
     def test_for_tests(self, tmp_path):
         cfg = Config.for_tests(tmp_path)
         assert cfg.root_dir == tmp_path
-        assert cfg.libvirt_uri == "qemu:///system"
+        assert cfg.libvirt_uri == "qemu:///session"
 
     def test_ensure_dirs_creates_structure(self, tmp_path):
         cfg = Config.for_tests(tmp_path)
@@ -98,3 +98,20 @@ class TestCapsules:
     def test_capsule_not_found(self):
         with pytest.raises(Exception):
             load_capsule("nonexistent-capsule-xyz")
+
+
+class TestProjectConfig:
+    def test_load_missing_returns_empty(self, tmp_path):
+        from latita.config import load_project_config, clear_project_config
+        clear_project_config()
+        cfg = load_project_config(tmp_path)
+        assert cfg == {}
+
+    def test_load_existing(self, tmp_path):
+        from latita.config import load_project_config, clear_project_config
+        clear_project_config()
+        (tmp_path / ".latita").write_text("memory: 8192\ncpus: 4\n")
+        cfg = load_project_config(tmp_path)
+        assert cfg["memory"] == 8192
+        assert cfg["cpus"] == 4
+        clear_project_config()

@@ -69,16 +69,38 @@ def resolve_capsules(
     profile: str = "",
     os_family: str = "",
 ) -> list[dict[str, Any]]:
-    resolved: list[dict[str, Any]] = []
-    for name in capsule_names:
+    """Resolve capsule names recursively, including dependencies.
+
+    Uses depth-first traversal of `depends_on` lists. Dependencies are
+    prepended before the requesting capsule so provisioning order is correct.
+    """
+    resolved_map: dict[str, dict[str, Any]] = {}
+
+    def _resolve(name: str, stack: list[str]) -> None:
+        if name in resolved_map:
+            return
+        if name in stack:
+            raise typer.BadParameter(
+                f"capsule dependency cycle detected: {' -> '.join(stack + [name])}"
+            )
         capsule = load_capsule(name)
         ok, reason = check_capsule_compatibility(
             capsule, profile=profile, os_family=os_family
         )
         if not ok:
             raise typer.BadParameter(f"capsule '{name}' incompatible: {reason}")
-        resolved.append(capsule)
-    return resolved
+        # Recurse into dependencies first (depth-first)
+        deps = capsule.get("depends_on", [])
+        if isinstance(deps, str):
+            deps = [deps]
+        for dep in deps:
+            _resolve(dep, stack + [name])
+        resolved_map[name] = capsule
+
+    for name in capsule_names:
+        _resolve(name, [])
+
+    return list(resolved_map.values())
 
 
 def capsule_provision_fragment(capsule: dict[str, Any]) -> dict[str, Any]:
