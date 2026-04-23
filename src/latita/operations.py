@@ -112,7 +112,7 @@ def _check_libvirt_connectivity(cfg) -> None:
             text=True,
             timeout=5,
         )
-        if cp.returncode in (0, 1):
+        if cp.returncode == 0:
             return
     except (subprocess.TimeoutExpired, OSError):
         pass
@@ -434,6 +434,9 @@ def _ensure_host_networks(
 ) -> None:
     if cfg.is_session:
         return
+
+    # Verify libvirt is reachable before attempting any sudo operations
+    _check_libvirt_connectivity(cfg)
 
     grant_qemu_path_access()
 

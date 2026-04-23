@@ -43,6 +43,24 @@ def resolve_root_dir(
     return Path.home() / DEFAULT_ROOT_DIRNAME
 
 
+def _auto_libvirt_uri() -> str:
+    if os.environ.get('LIBVIRT_DEFAULT_URI'):
+        return os.environ['LIBVIRT_DEFAULT_URI']
+    import subprocess
+    try:
+        cp = subprocess.run(
+            ['virsh', '-c', 'qemu:///system', 'list'],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if cp.returncode == 0:
+            return 'qemu:///system'
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return 'qemu:///session'
+
+
 # ---------------------------------------------------------------------------
 # Config dataclass
 # ---------------------------------------------------------------------------
@@ -118,7 +136,7 @@ class Config:
         root = resolve_root_dir()
         return cls(
             root_dir=root,
-            libvirt_uri=os.environ.get("LIBVIRT_DEFAULT_URI", "qemu:///system"),
+            libvirt_uri=_auto_libvirt_uri(),
             default_base_url=(
                 "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/"
                 "Fedora-Cloud-Base-Generic.x86_64-43-1.3.qcow2"
