@@ -91,15 +91,15 @@ class Dashboard(App):
 
     BINDINGS = [
         Binding('q', 'quit', 'Quit', show=False),
-        Binding('1', 'run_action(0)', '', show=False),
-        Binding('2', 'run_action(1)', '', show=False),
-        Binding('3', 'run_action(2)', '', show=False),
-        Binding('4', 'run_action(3)', '', show=False),
-        Binding('5', 'run_action(4)', '', show=False),
-        Binding('6', 'run_action(5)', '', show=False),
-        Binding('7', 'run_action(6)', '', show=False),
-        Binding('8', 'run_action(7)', '', show=False),
-        Binding('9', 'run_action(8)', '', show=False),
+        Binding('1', 'action_1', '', show=False),
+        Binding('2', 'action_2', '', show=False),
+        Binding('3', 'action_3', '', show=False),
+        Binding('4', 'action_4', '', show=False),
+        Binding('5', 'action_5', '', show=False),
+        Binding('6', 'action_6', '', show=False),
+        Binding('7', 'action_7', '', show=False),
+        Binding('8', 'action_8', '', show=False),
+        Binding('9', 'action_9', '', show=False),
         Binding('up', 'cursor_up', '', show=False),
         Binding('down', 'cursor_down', '', show=False),
         Binding('enter', 'confirm_action', '', show=False),
@@ -115,7 +115,7 @@ class Dashboard(App):
     def compose(self):
         yield Static('Latita', id='sidebar-title')
         yield Static('VMs: —', id='sidebar-info')
-        yield Static(self._sidebar_str(), id='actions')
+        yield Static(self._sidebar_str(), id='actions', markup=False)
         yield Static('', id='main-area')
 
     def _sidebar_str(self) -> str:
@@ -152,32 +152,41 @@ class Dashboard(App):
         info.update(f'VMs: {total}  |  navigate with up/down keys')
         main_area.update(f'VMs ({total})\n{vm_str}')
 
-    def run_action(self, idx: int) -> None:
+    def _with_refresh(self, fn: callable) -> None:
         self._suspend_refresh = True
         try:
-            match idx:
-                case 0:
-                    self._action_create()
-                case 1:
-                    self._action_run()
-                case 2:
-                    self._action_list()
-                case 3:
-                    self._action_start()
-                case 4:
-                    self._action_stop()
-                case 5:
-                    self._action_destroy()
-                case 6:
-                    self._action_ssh()
-                case 7:
-                    self._action_connect()
-                case 8:
-                    self._action_bootstrap()
+            fn()
         finally:
             self._suspend_refresh = False
             self._refresh_vm_list()
             self._update_vm_display()
+
+    def action_1(self) -> None:
+        self._with_refresh(self._action_create)
+
+    def action_2(self) -> None:
+        self._with_refresh(self._action_run)
+
+    def action_3(self) -> None:
+        self._with_refresh(self._action_list)
+
+    def action_4(self) -> None:
+        self._with_refresh(self._action_start)
+
+    def action_5(self) -> None:
+        self._with_refresh(self._action_stop)
+
+    def action_6(self) -> None:
+        self._with_refresh(self._action_destroy)
+
+    def action_7(self) -> None:
+        self._with_refresh(self._action_ssh)
+
+    def action_8(self) -> None:
+        self._with_refresh(self._action_connect)
+
+    def action_9(self) -> None:
+        self._with_refresh(self._action_bootstrap)
 
     def action_cursor_up(self) -> None:
         if self._vm_list:
