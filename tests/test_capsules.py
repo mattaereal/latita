@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from latita.config import list_capsules, load_capsule
 from latita.capsules import (
     check_capsule_compatibility,
     capsule_live_commands,
@@ -175,3 +176,44 @@ class TestDependsOn:
         assert any("hermes" in d for d in descs)
         assert any("openclaw" in d for d in descs)
         assert any("all major ai" in d for d in descs)
+
+
+class TestBuiltinCapsules:
+    """Verify every built-in capsule loads, has valid structure, and resolves."""
+
+    def test_all_builtin_capsules_load(self):
+        names = list_capsules()
+        assert len(names) >= 10
+        for name in names:
+            cap = load_capsule(name)
+            assert "description" in cap, f"{name} missing description"
+            # Should not crash when extracting fragments
+            _ = capsule_provision_fragment(cap)
+            _ = capsule_live_commands(cap)
+
+    def test_all_capsules_resolve_individually(self):
+        for name in list_capsules():
+            resolved = resolve_capsules([name], profile="headless", os_family="fedora")
+            assert len(resolved) >= 1
+            # Verify dependency order: dependencies come before dependents
+            if len(resolved) > 1:
+                descs = [c.get("description", "") for c in resolved]
+                for i, cap in enumerate(resolved):
+                    deps = cap.get("depends_on", [])
+                    if isinstance(deps, str):
+                        deps = [deps]
+                    for dep in deps:
+                        dep_cap = load_capsule(dep)
+                        dep_desc = dep_cap.get("description", "")
+                        dep_idx = next(
+                            (j for j, d in enumerate(descs) if d == dep_desc),
+                            None,
+                        )
+                        assert dep_idx is not None
+                        assert dep_idx < i, f"{name}: dependency {dep} not before {i}"
+
+    def test_all_capsules_are_compatible_with_headless_fedora(self):
+        for name in list_capsules():
+            cap = load_capsule(name)
+            ok, reason = check_capsule_compatibility(cap, profile="headless", os_family="fedora")
+            assert ok, f"{name} incompatible with headless/fedora: {reason}"

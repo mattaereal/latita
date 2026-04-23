@@ -129,13 +129,17 @@ class TestFedoraSsh:
         destroy_instance(name)
 
     def test_ssh_instance_builds_correct_command(self, fedora_cfg):
-        """ssh_instance constructs the right SSH command with dynamic IP and injected key."""
+        """ssh_instance constructs the right SSH command with dynamic IP or forwarded port."""
         cfg = fedora_cfg
         name = "test-f43-ssh"
         self._create_fedora_vm(cfg, name)
         start_instance(name)
 
         ip = _wait_for_vm_ip(name, timeout=180)
+
+        # Read forwarded port if session mode
+        env = read_instance_env(name)
+        forwarded_port = env.get("FORWARDED_SSH_PORT")
 
         # Only mock the actual SSH calls; let everything else (virsh, qemu-img) run for real
         real_run = subprocess.run
@@ -153,9 +157,14 @@ class TestFedoraSsh:
             assert len(ssh_calls) == 1
             cmd = ssh_calls[0].args[0]
             assert cmd[0] == "ssh"
-            assert any(ip in a for a in cmd)
             assert any("lab1_ed25519" in a for a in cmd)
             assert "echo hello" in cmd
+            if forwarded_port:
+                assert "localhost" in str(cmd)
+                assert "-p" in cmd
+                assert forwarded_port in str(cmd)
+            else:
+                assert any(ip in a for a in cmd)
 
         destroy_instance(name)
 
@@ -167,6 +176,9 @@ class TestFedoraSsh:
         start_instance(name)
 
         ip = _wait_for_vm_ip(name, timeout=180)
+
+        env = read_instance_env(name)
+        forwarded_port = env.get("FORWARDED_SSH_PORT")
 
         real_run = subprocess.run
 
@@ -183,8 +195,13 @@ class TestFedoraSsh:
             assert len(ssh_calls) >= 1
             cmd = ssh_calls[0].args[0]
             assert cmd[0] == "ssh"
-            assert any(ip in a for a in cmd)
             assert "capsule-live-test" in str(cmd)
+            if forwarded_port:
+                assert "localhost" in str(cmd)
+                assert "-p" in cmd
+                assert forwarded_port in str(cmd)
+            else:
+                assert any(ip in a for a in cmd)
 
         destroy_instance(name)
 
@@ -213,6 +230,60 @@ class TestFedoraSsh:
         assert ip
         assert ip != "10.31.0.10"
 
+        destroy_instance(name)
+
+    @pytest.mark.skip(reason="Cloud-init provisioning does not run in session mode; sshd and user accounts are not created. See AGENTS.md for details.")
+    def test_real_ssh_to_vm_executes_command(self, fedora_cfg):
+        """Real SSH end-to-end via localhost port forwarding in session mode.
+
+        NOTE: This test requires cloud-init to properly provision the VM.
+        Currently, cloud-init detects NoCloud but does not process user-data
+        in session-mode VMs (reason TBD). Until this is fixed, sshd is not
+        running and the dev user is not created, so real SSH cannot succeed.
+        """
+        cfg = fedora_cfg
+        name = "test-f43-realssh"
+        self._create_fedora_vm(cfg, name)
+        start_instance(name)
+
+        _wait_for_vm_ip(name, timeout=180)
+
+        env = read_instance_env(name)
+        forwarded_port = env.get("FORWARDED_SSH_PORT")
+        assert forwarded_port, "Expected FORWARDED_SSH_PORT in session mode"
+
+        user = env.get("GUEST_USER", "dev")
+        recipe = read_instance_recipe(name)
+        key = None
+        if recipe:
+            keys = recipe.get("_keys", {})
+            lab_priv = keys.get("lab_privkey_path")
+            if lab_priv and Path(lab_priv).exists():
+                key = lab_priv
+        assert key, "No SSH private key found"
+
+        start = time.time()
+        result = None
+        while time.time() - start < 180:
+            cmd = [
+                "ssh",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "ConnectTimeout=5",
+                "-o", "BatchMode=yes",
+                "-p", forwarded_port,
+                "-i", key,
+                f"{user}@localhost",
+                "echo ssh-real-test",
+            ]
+            cp = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            if cp.returncode == 0 and "ssh-real-test" in cp.stdout:
+                result = cp
+                break
+            time.sleep(3)
+
+        assert result is not None
+        assert "ssh-real-test" in result.stdout
         destroy_instance(name)
 
 
@@ -352,8 +423,3 @@ class TestCapsuleProvision:
         assert "claude-code" in ud or "anthropic" in ud
         assert "kimi-cli" in ud or "kimi" in ud
         destroy_instance(name)
-
-    @pytest.mark.skip(reason="Host-to-VM SSH requires NAT bridge or port forwarding; not available in qemu:///session mode")
-    def test_real_ssh_to_vm_skipped_in_session_mode(self, fedora_cfg):
-        """Placeholder: real SSH end-to-end tests need qemu:///system or port forwarding."""
-        pass

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import re
 import shutil
+import socket
 import subprocess
 import urllib.request
 from copy import deepcopy
@@ -96,6 +97,15 @@ def _package_manager_for_recipe(recipe: dict[str, Any]) -> str:
     if os_family in ("alpine",):
         return "apk"
     return "dnf"
+
+
+def _find_free_port(start: int = 2222, end: int = 9999) -> int:
+    """Find an available TCP port on localhost."""
+    for port in range(start, end + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", port)) != 0:
+                return port
+    raise RuntimeError(f"No free TCP port found in range {start}-{end}")
 
 
 # ---------------------------------------------------------------------------
@@ -538,12 +548,18 @@ def _run_create(
         args.extend(["--graphics", "none"])
 
     # Networking
+    ssh_port = None
     if net_mode == "isolated" or net_mode == "none":
         args.extend(["--network", "none"])
     elif net_mode == "direct":
         args.extend(["--network", f"type=direct,source={uplink},source_mode=private,model=virtio,mac={wan_mac}"])
     elif net_mode == "user":
-        args.extend(["--network", f"type=user,model=virtio,mac={wan_mac}"])
+        if cfg.is_session:
+            ssh_port = _find_free_port()
+            args.extend(["--network", "none"])
+            args.append(f"--qemu-commandline=-netdev user,id=net0,hostfwd=tcp::{ssh_port}-:22 -device virtio-net-pci,netdev=net0,mac={wan_mac},addr=0x10")
+        else:
+            args.extend(["--network", f"type=user,model=virtio,mac={wan_mac}"])
     else:
         args.extend(["--network", f"network={nat_network},model=virtio,mac={wan_mac}"])
     if not cfg.is_session and net_mode not in ("isolated", "none"):
@@ -594,6 +610,7 @@ def _run_create(
         "DESTROY_ON_STOP": "yes" if spec["destroy_on_stop"] else "no",
         "MAX_RUNS": str(spec["max_runs"] or ""),
         "EXPIRE_AT": str(spec["expire_at"] or ""),
+        "FORWARDED_SSH_PORT": str(ssh_port) if ssh_port else "",
         "GRAPHICS": spec["graphics"],
     })
 
@@ -792,7 +809,12 @@ def run_instance(
         if net_mode in ("isolated", "none"):
             args.extend(["--network", "none"])
         elif net_mode == "user":
-            args.extend(["--network", f"type=user,model=virtio,mac={wan_mac}"])
+            if cfg.is_session:
+                ssh_port = _find_free_port()
+                args.extend(["--network", "none"])
+                args.append(f"--qemu-commandline=-netdev user,id=net0,hostfwd=tcp::{ssh_port}-:22 -device virtio-net-pci,netdev=net0,mac={wan_mac},addr=0x10")
+            else:
+                args.extend(["--network", f"type=user,model=virtio,mac={wan_mac}"])
         elif net_mode == "direct" and net.get("uplink"):
             args.extend(["--network", f"type=direct,source={net['uplink']},source_mode=private,model=virtio,mac={wan_mac}"])
         else:
@@ -880,12 +902,20 @@ def revive_instance(name: str) -> None:
     else:
         args.extend(["--graphics", "none"])
 
+    ssh_port = None
     if net_mode in ("isolated", "none"):
         args.extend(["--network", "none"])
     elif net_mode == "direct" and uplink and iface_exists(uplink):
         args.extend(["--network", f"type=direct,source={uplink},source_mode=private,model=virtio,mac={wan_mac}"])
     elif net_mode == "user":
-        args.extend(["--network", f"type=user,model=virtio,mac={wan_mac}"])
+        if cfg.is_session:
+            existing_env = read_instance_env(name)
+            existing_port = existing_env.get("FORWARDED_SSH_PORT")
+            ssh_port = int(existing_port) if existing_port else _find_free_port()
+            args.extend(["--network", "none"])
+            args.append(f"--qemu-commandline=-netdev user,id=net0,hostfwd=tcp::{ssh_port}-:22 -device virtio-net-pci,netdev=net0,mac={wan_mac},addr=0x10")
+        else:
+            args.extend(["--network", f"type=user,model=virtio,mac={wan_mac}"])
     else:
         args.extend(["--network", f"network={nat_network},model=virtio,mac={wan_mac}"])
     if not cfg.is_session and net_mode not in ("isolated", "none"):
@@ -902,6 +932,14 @@ def revive_instance(name: str) -> None:
 
     virt_install(args)
     metadata.increment_run_count(name)
+
+    # Update forwarded port in env if it changed during revive
+    if ssh_port:
+        existing_env = read_instance_env(name)
+        if existing_env.get("FORWARDED_SSH_PORT") != str(ssh_port):
+            existing_env["FORWARDED_SSH_PORT"] = str(ssh_port)
+            write_instance_env(name, existing_env)
+
     console.print(f"Revived {name}", style="green")
 
 
@@ -927,11 +965,18 @@ def get_vm_ip(name: str) -> str | None:
 
 def ssh_instance(name: str, command: str | None = None) -> None:
     validate_name(name)
-    ip = get_vm_ip(name)
+    env = read_instance_env(name)
+    forwarded_port = env.get("FORWARDED_SSH_PORT")
+    user = env.get("GUEST_USER", "dev")
+
+    if forwarded_port:
+        ip = "localhost"
+        ssh_port = forwarded_port
+    else:
+        ip = get_vm_ip(name)
+        ssh_port = None
     if not ip:
         raise typer.BadParameter(f"cannot resolve IP for {name}")
-    env = read_instance_env(name)
-    user = env.get("GUEST_USER", "dev")
 
     recipe = read_instance_recipe(name)
     key = None
@@ -952,7 +997,10 @@ def ssh_instance(name: str, command: str | None = None) -> None:
     if not key:
         raise typer.BadParameter("no SSH private key found")
 
-    cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-i", key, f"{user}@{ip}"]
+    cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-i", key]
+    if ssh_port:
+        cmd.extend(["-p", str(ssh_port)])
+    cmd.append(f"{user}@{ip}")
     if command:
         cmd.append(command)
     subprocess.run(cmd)
@@ -989,7 +1037,14 @@ def apply_capsule_live(name: str, capsule_name: str) -> None:
         console.print(f"Capsule '{capsule_name}' has no live commands", style="yellow")
         return
 
-    ip = get_vm_ip(name)
+    env = read_instance_env(name)
+    forwarded_port = env.get("FORWARDED_SSH_PORT")
+    if forwarded_port:
+        ip = "localhost"
+        ssh_port = forwarded_port
+    else:
+        ip = get_vm_ip(name)
+        ssh_port = None
     if not ip:
         console.print(f"[yellow]Cannot resolve IP for {name}. Is the VM running?[/yellow]")
         console.print("[yellow]Try: latita start {name}[/yellow]")
@@ -1020,9 +1075,10 @@ def apply_capsule_live(name: str, capsule_name: str) -> None:
         "-o", "UserKnownHostsFile=/dev/null",
         "-o", "ConnectTimeout=5",
         "-i", key,
-        f"{user}@{ip}",
-        "bash", "-lc", script,
     ]
+    if ssh_port:
+        ssh_cmd.extend(["-p", str(ssh_port)])
+    ssh_cmd.extend([f"{user}@{ip}", "bash", "-lc", script])
     console.print(f"Applying capsule '{capsule_name}' to {name} via SSH...", style="cyan")
     result = subprocess.run(ssh_cmd, capture_output=True, text=True)
     if result.returncode != 0:

@@ -54,7 +54,15 @@ If `LIBVIRT_DEFAULT_URI` is `qemu:///session` or `Config.for_tests` is used, lat
 - Skips `setfacl` / `grant_qemu_path_access`
 - Works out of the box for unprivileged users
 
-**Limitation**: In session mode, VMs use SLIRP user networking (`10.0.2.15`). The host cannot directly reach the VM's internal IP. Real SSH end-to-end tests that connect from host to VM require `qemu:///system` with a NAT bridge or port forwarding. The test suite handles this by mocking SSH commands and verifying cloud-init `user-data.yaml` contents instead.
+**Port forwarding for SSH**: Session-mode VMs now get automatic QEMU `hostfwd` port forwarding via `--qemu-commandline`. `create_instance` picks a free localhost port (e.g. 2222-9999) and forwards it to guest port 22. The port is stored in instance env as `FORWARDED_SSH_PORT`. `ssh_instance` and `apply_capsule_live` use `localhost:PORT` when this variable is set.
+
+**Limitation — cloud-init in session mode**: Cloud-init's `ds-identify` detects the NoCloud datasource, but the main cloud-init service does not process user-data (reason TBD — possibly virtio-net-pci on `addr=0x10` or SLIRP timing). This means:
+- The `dev` user is not created
+- `sshd` is not enabled
+- Bootstrap scripts don't run
+- Real SSH end-to-end still fails until this is fixed
+
+The test suite handles this by mocking SSH commands and verifying cloud-init `user-data.yaml` contents instead. The `test_real_ssh_to_vm_executes_command` integration test is skipped with a pointer to this note.
 
 ### Why Python (not Rust)
 
@@ -84,4 +92,12 @@ For a CLI that orchestrates libvirt/QEMU, Python is the right trade-off.
 ### Tests
 
 Run `python -m py_compile src/latita/*.py` for a quick smoke check.
-Run `.venv3/bin/python -m pytest tests/` for the full suite (188 tests including real VM lifecycle, capsule dependency resolution, and cloud-init provision merging).
+Run `.venv3/bin/python -m pytest tests/` for the full suite (191 tests including real VM lifecycle, capsule dependency resolution, and cloud-init provision merging).
+
+### Future work
+
+- **Fix cloud-init in session mode**: Investigate why NoCloud `user-data` is not processed in `qemu:///session` with SLIRP + virtio-net-pci at `addr=0x10`. Options: use `passt` backend, switch to `pc` machine type, or generate a persistent NoCloud ISO and attach it via `--disk` instead of `--cloud-init`.
+- **Real SSH end-to-end tests**: Once cloud-init works in session mode, unskip `test_real_ssh_to_vm_executes_command` and add heavy integration tests that verify capsules actually install packages inside VMs.
+- **Snapshot / clone support**: `latita snapshot <name>` and `latita clone <name> <new-name>` using `qemu-img` backing chains.
+- **Template marketplace**: Share templates via a Git-based registry or simple HTTP index.
+- **TUI dashboard**: A `textual` or `rich` live view of running VMs with resource usage.
