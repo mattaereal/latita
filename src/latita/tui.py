@@ -5,9 +5,8 @@ from typing import Optional
 
 from textual.app import App
 from textual.binding import Binding
-from textual.widgets import DataTable, Header, Static
+from textual.widgets import Static
 
-from .config import get_config
 from .operations import (
     bootstrap_host,
     connect_instance,
@@ -21,20 +20,21 @@ from .operations import (
 )
 
 
-def _build_vm_table_str(entries: list[dict]) -> str:
+def _build_vm_table_str(entries: list[dict], selected_idx: int = -1) -> str:
     if not entries:
         return '  No VMs found'
     header = f'  {'Name':<20} {'Status':<10} {'IP':<15} {'Profile':<10} {'CPUs':<6} {'Mem':<8}'
     sep = '  ' + '-' * 70
     rows = []
-    for e in entries:
+    for i, e in enumerate(entries):
         name = e.get('name', '?')[:20]
         status = e.get('status', '?')[:10]
         ip = e.get('ip') or '—'[:15]
         profile = e.get('profile') or '—'[:10]
         cpus = str(e.get('cpus', '—'))[:6]
         mem = str(e.get('memory', '—'))[:8]
-        rows.append(f'  {name:<20} {status:<10} {ip:<15} {profile:<10} {cpus:<6} {mem:<8}')
+        marker = '> ' if i == selected_idx else '  '
+        rows.append(f'{marker}{name:<20} {status:<10} {ip:<15} {profile:<10} {cpus:<6} {mem:<8}')
     return '\n'.join([header, sep] + rows)
 
 
@@ -66,26 +66,18 @@ class Dashboard(App):
 
     #actions {
         color: #cdd6f4;
-    }
-
-    #action-item {
-        color: #cdd6f4;
-        padding: 0 0;
+        height: auto;
     }
 
     #main-area {
         width: 1fr;
+        height: auto;
         padding: 1 3;
+        overflow: hidden auto;
     }
 
-    #vm-title {
-        color: #89b4fa;
-        text-style: bold;
-        margin-bottom: 1;
-    }
-
-    #vm-list {
-        color: #bac2de;
+    #vm-table-container {
+        overflow: hidden auto;
     }
 
     #statusbar {
@@ -121,7 +113,6 @@ class Dashboard(App):
         self._vm_list: list[dict] = []
 
     def compose(self):
-        yield Header()
         yield Static('Latita', id='sidebar-title')
         yield Static('VMs: —', id='sidebar-info')
         yield Static(self._sidebar_str(), id='actions')
@@ -139,7 +130,7 @@ class Dashboard(App):
             ('8', 'Connect'),
             ('9', 'Bootstrap'),
         ]
-        return '\n'.join(f'[{a}]{n}[/]' for a, n in actions)
+        return '\n'.join(f'  [{a}] {n}' for a, n in actions)
 
     def on_mount(self) -> None:
         self._refresh_vm_list()
@@ -148,15 +139,18 @@ class Dashboard(App):
 
     def _refresh_vm_list(self) -> None:
         if not self._suspend_refresh:
-            self._vm_list = scan_instances()
+            new_list = scan_instances()
+            if new_list != self._vm_list:
+                self._vm_list = new_list
+                self._update_vm_display()
 
     def _update_vm_display(self) -> None:
         main_area = self.query_one('#main-area', Static)
-        vm_str = _build_vm_table_str(self._vm_list)
+        vm_str = _build_vm_table_str(self._vm_list, self._selected_idx)
         total = len(self._vm_list)
         info = self.query_one('#sidebar-info', Static)
-        info.update(f'VMs: {total}  |  ↑↓ navigate')
-        main_area.update(f'[bold]VMs[/bold]\n[dim]{vm_str}[/dim]')
+        info.update(f'VMs: {total}  |  navigate with up/down keys')
+        main_area.update(f'VMs ({total})\n{vm_str}')
 
     def run_action(self, idx: int) -> None:
         self._suspend_refresh = True
@@ -217,7 +211,7 @@ class Dashboard(App):
         template_name = recipe.get('template_name', recipe.get('profile', 'headless'))
         try:
             create_instance(template_name, name=recipe.get('name'), overrides=recipe)
-            self.notify('[green]VM created[/green]')
+            self.notify('VM created successfully')
         except Exception as exc:
             self.notify(f'Create failed: {exc}', severity='error')
 
@@ -234,8 +228,8 @@ class Dashboard(App):
             self.notify(f'Run failed: {exc}', severity='error')
 
     def _action_list(self) -> None:
-        vm_str = _build_vm_table_str(self._vm_list)
-        self.notify(f'VMs ({len(self._vm_list)})\n[dim]{vm_str[:300]}[/dim]', timeout=6.0)
+        vm_str = _build_vm_table_str(self._vm_list, self._selected_idx)
+        self.notify(f'VMs ({len(self._vm_list)})\n{vm_str[:300]}', timeout=6.0)
 
     def _action_start(self) -> None:
         name = self._selected_name()
