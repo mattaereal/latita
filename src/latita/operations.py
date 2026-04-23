@@ -597,14 +597,18 @@ def _run_create(
 
     wan_mac = random_mac()
     mgmt_mac = random_mac()
-    net_cfg = build_network_config(
-        wan_mac, mgmt_mac, net["mgmt_ip"], net["mgmt_prefix"]
-    )
 
     ud_path = inst / "user-data.yaml"
-    nc_path = inst / "network-config.yaml"
-    ud_path.write_text(user_data)
-    nc_path.write_text(net_cfg)
+    if net_mode not in ("isolated", "none"):
+        net_cfg = build_network_config(
+            wan_mac, mgmt_mac, net["mgmt_ip"], net["mgmt_prefix"]
+        )
+        nc_path = inst / "network-config.yaml"
+        ud_path.write_text(user_data)
+        nc_path.write_text(net_cfg)
+    else:
+        ud_path.write_text(user_data)
+        nc_path = None
 
     # Build a persistent NoCloud ISO — more reliable than virt-install's
     # temporary --cloud-init ISO, especially in qemu:///session mode.
@@ -870,12 +874,16 @@ def run_instance(
 
         wan_mac = random_mac()
         net = recipe["network"]
-        net_cfg = build_network_config(wan_mac, random_mac(), net["mgmt_ip"], net["mgmt_prefix"])
 
         ud_path = Path(td) / "user-data.yaml"
-        nc_path = Path(td) / "network-config.yaml"
-        ud_path.write_text(user_data)
-        nc_path.write_text(net_cfg)
+        if net["mode"] not in ("isolated", "none"):
+            net_cfg = build_network_config(wan_mac, random_mac(), net["mgmt_ip"], net["mgmt_prefix"])
+            nc_path = Path(td) / "network-config.yaml"
+            ud_path.write_text(user_data)
+            nc_path.write_text(net_cfg)
+        else:
+            ud_path.write_text(user_data)
+            nc_path = None
 
         iso_path = Path(td) / "nocloud.iso"
         _build_nocloud_iso(ud_path, nc_path, iso_path, instance_id=name)
@@ -1104,6 +1112,7 @@ def ssh_instance(name: str, command: str | None = None) -> None:
 
     recipe = read_instance_recipe(name)
     key = None
+    lab_key_path = None
     if recipe:
         keys = recipe.get("_keys", {})
         lab_priv = keys.get("lab_privkey_path")
@@ -1139,11 +1148,20 @@ def connect_instance(name: str) -> None:
         ssh_instance(name)
 
 
+
 def apply_capsule_live(name: str, capsule_name: str) -> None:
     validate_name(name)
     recipe = read_instance_recipe(name)
     if not recipe:
-        raise typer.BadParameter(f"no saved recipe for {name}")
+        # For transient VMs without saved recipe, use defaults
+        # The user accepts the risk that capsule compatibility check may pass
+        # even if the VM is actually incompatible
+        recipe = {
+            "profile": "unknown",
+            "os_family": "unknown",
+            "guest_user": "dev",
+            "_keys": {},
+        }
 
     capsule = capsules.load_capsule(capsule_name)
     ok, reason = capsules.check_capsule_compatibility(
