@@ -1,0 +1,51 @@
+/* tui.tcss — Latita TUI stylesheet */
+
+/* Confirm modal */
+ConfirmScreen { align: center middle; }
+#confirm-box { width: 60; height: auto; background: #1e1e2e; border: solid #89b4fa; padding: 1 2; }
+#confirm-msg { color: #cdd6f4; text-align: center; }
+#confirm-hint { color: #7f849c; text-align: center; margin-top: 1; }
+
+/* Form screens (Create VM, Run VM, Apply Capsule) */
+.form-screen { align: center middle; }
+.form-box { width: 60; height: auto; background: #1e1e2e; border: solid #89b4fa; padding: 1 2; }
+.form-title { color: #89b4fa; text-style: bold; text-align: center; }
+.form-error { color: #f38ba8; text-align: center; height: 1; }
+.form-warn { color: #f9e2af; text-align: center; }
+.form-buttons { layout: horizontal; height: auto; margin-top: 1; }
+.form-buttons Button { width: 1fr; }
+
+/* Apply capsule */
+#cap-net-warn { color: #f9e2af; text-align: center; }
+
+/* Info screen */
+InfoScreen { align: center middle; }
+#info-box { width: 80; height: auto; background: #1e1e2e; border: solid #89b4fa; padding: 1 2; }
+#info-title { color: #89b4fa; text-style: bold; text-align: center; }
+#info-scroll { height: 1fr; }
+#info-detail { height: auto; }
+#info-hint { color: #7f849c; text-align: center; margin-top: 1; }
+
+/* Browser screens (Templates, Capsules) */
+BrowserScreen { layout: vertical; background: #1e1e2e; }
+#browser-title { height: 1; text-align: center; color: #89b4fa; text-style: bold; }
+#browser-body { layout: horizontal; height: 1fr; }
+#browser-left { width: 2fr; border: solid #89b4fa; }
+#browser-right { width: 1fr; border: solid #89b4fa; background: #16161e; padding: 0 1; }
+#browser-detail-scroll { height: 1fr; }
+#browser-detail { height: auto; }
+#browser-actions { height: auto; color: #a6adc8; background: #1e1e2e; border-top: solid #313244; padding: 1 0; }
+
+/* Dashboard */
+Screen { layout: vertical; background: #1e1e2e; }
+#body { layout: horizontal; height: 1fr; }
+#left-pane { width: 2fr; padding: 0 1; }
+#right-pane { width: 24; padding: 0 1; background: #16161e; border-left: solid #89b4fa; }
+#left-title { height: 1; color: #89b4fa; text-style: bold; }
+#right-title { height: 1; color: #89b4fa; text-style: bold; }
+#vm-table { height: 1fr; border: solid #313244; }
+#vm-table:focus { border: solid #89b4fa; }
+#action-list { height: 1fr; border: solid #313244; }
+#action-list:focus { border: solid #89b4fa; }
+#hint-pane { height: 1; color: #7f849c; background: #0f0f1a; border-top: solid #313244; padding: 0 1; }
+#statusbar { dock: bottom; height: 1; color: #7f849c; background: #16161e; border-top: solid #313244; padding: 0 1; }

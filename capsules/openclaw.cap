@@ -17,3 +17,5 @@ live:
   commands:
     - pip3 install --user openclaw
     - openclaw --help 2>/dev/null || echo "OpenClaw not available; check pip installation"
+
+verify: openclaw --help >/dev/null 2>&1 && echo "[OK] OpenClaw ready" || echo "[FAIL] OpenClaw not available"

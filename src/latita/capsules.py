@@ -118,6 +118,55 @@ def capsule_live_user(capsule: dict[str, Any], default: str = "dev") -> str:
     return str(live.get("user", default))
 
 
+def capsule_verify_command(capsule: dict[str, Any]) -> str | None:
+    """Return the verify command string, or None if none defined."""
+    verify = capsule.get("verify")
+    if isinstance(verify, str) and verify.strip():
+        return verify.strip()
+    return None
+
+
+class _SafeFormatDict(dict[str, str]):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def _format_value(value: Any, context: dict[str, str]) -> Any:
+    if isinstance(value, str):
+        return value.format_map(_SafeFormatDict(context))
+    if isinstance(value, list):
+        return [_format_value(item, context) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _format_value(item, context) for key, item in value.items()}
+    return value
+
+
+def format_live_commands(capsule: dict[str, Any], guest_user: str) -> list[str]:
+    """Return live commands with {guest_user}, {home_dir}, etc. substituted."""
+    home_dir = f"/home/{guest_user}"
+    context = {
+        "guest_user": guest_user,
+        "home_dir": home_dir,
+        "workspace_dir": f"{home_dir}/workspace",
+    }
+    raw = capsule_live_commands(capsule)
+    return [_format_value(cmd, context) for cmd in raw]
+
+
+def format_verify_command(capsule: dict[str, Any], guest_user: str) -> str | None:
+    """Return verify command with {guest_user}, {home_dir}, etc. substituted."""
+    cmd = capsule_verify_command(capsule)
+    if not cmd:
+        return None
+    home_dir = f"/home/{guest_user}"
+    context = {
+        "guest_user": guest_user,
+        "home_dir": home_dir,
+        "workspace_dir": f"{home_dir}/workspace",
+    }
+    return _format_value(cmd, context)
+
+
 def list_compatible_capsules(
     profile: str = "", os_family: str = ""
 ) -> dict[str, dict[str, Any]]:

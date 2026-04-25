@@ -263,6 +263,24 @@ def load_latita_template(name: str, cfg: Config | None = None) -> dict[str, Any]
     return data
 
 
+def get_template_path(name: str, cfg: Config | None = None) -> Path:
+    cfg = cfg or get_config()
+    user_path = cfg.templates_dir / f"{name}.latita"
+    if user_path.exists():
+        return user_path
+    pkg_path = Path(__file__).with_name("builtin_templates") / f"{name}.latita"
+    if pkg_path.exists():
+        return pkg_path
+    raise typer.BadParameter(f"template not found: {name}")
+
+
+def is_builtin_template(name: str, cfg: Config | None = None) -> bool:
+    cfg = cfg or get_config()
+    user_path = cfg.templates_dir / f"{name}.latita"
+    pkg_path = Path(__file__).with_name("builtin_templates") / f"{name}.latita"
+    return pkg_path.exists() and not user_path.exists()
+
+
 # ---------------------------------------------------------------------------
 # Capsules
 # ---------------------------------------------------------------------------
@@ -296,6 +314,24 @@ def load_capsule(name: str, cfg: Config | None = None) -> dict[str, Any]:
     if name not in capsules:
         raise typer.BadParameter(f"capsule not found: {name}")
     return capsules[name]
+
+
+def get_capsule_path(name: str, cfg: Config | None = None) -> Path:
+    cfg = cfg or get_config()
+    user_path = cfg.capsules_dir / f"{name}.cap"
+    if user_path.exists():
+        return user_path
+    pkg_path = Path(__file__).with_name("builtin_capsules") / f"{name}.cap"
+    if pkg_path.exists():
+        return pkg_path
+    raise typer.BadParameter(f"capsule not found: {name}")
+
+
+def is_builtin_capsule(name: str, cfg: Config | None = None) -> bool:
+    cfg = cfg or get_config()
+    user_path = cfg.capsules_dir / f"{name}.cap"
+    pkg_path = Path(__file__).with_name("builtin_capsules") / f"{name}.cap"
+    return pkg_path.exists() and not user_path.exists()
 
 
 # ---------------------------------------------------------------------------

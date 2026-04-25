@@ -22,3 +22,5 @@ live:
   commands:
     - sudo systemctl start docker || true
     - docker info >/dev/null 2>&1 || true
+
+verify: docker info >/dev/null 2>&1 && echo "[OK] Docker running" || echo "[FAIL] Docker not available"

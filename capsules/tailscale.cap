@@ -22,3 +22,5 @@ live:
   commands:
     - systemctl start tailscaled || true
     - tailscale status 2>/dev/null || echo "Run: tailscale up --authkey <KEY>"
+
+verify: tailscale status 2>/dev/null && echo "[OK] Tailscale active" || echo "[FAIL] Tailscale not connected"

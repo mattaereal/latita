@@ -19,3 +19,5 @@ live:
   commands:
     - pip3 install --user open-webui
     - which open-webui || pip3 install --user open-webui
+
+verify: which open-webui >/dev/null 2>&1 && echo "[OK] Open WebUI installed" || echo "[FAIL] Open WebUI not available"

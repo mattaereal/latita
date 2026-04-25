@@ -41,3 +41,5 @@ live:
     - pip3 install --user aider-chat 2>/dev/null || true
     - pip3 install --user hermes-agent 2>/dev/null || true
     - pip3 install --user openclaw 2>/dev/null || true
+
+verify: (claude --version 2>/dev/null || true) && (codex --version 2>/dev/null || true) && echo "[OK] AI agents present" || echo "[FAIL] Some agents missing"

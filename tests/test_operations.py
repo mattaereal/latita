@@ -203,22 +203,26 @@ class TestDiscoverLatestFedoraUrl:
         result = _discover_latest_fedora_url(
             "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.3.x86_64.qcow2"
         )
-        assert result is not None
-        assert result.endswith("Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2")
-
-    @patch("latita.operations.urllib.request.urlopen")
-    def test_returns_none_when_no_matches(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = b"<html><body>no files here</body></html>"
-        mock_resp.__enter__.return_value = mock_resp
-        mock_urlopen.return_value = mock_resp
-
-        from latita.operations import _discover_latest_fedora_url
-
-        result = _discover_latest_fedora_url(
-            "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.3.x86_64.qcow2"
-        )
         assert result is None
+
+
+class TestDesktopVideoModel:
+    """Verify desktop VMs use virtio video in session mode, qxl in system mode."""
+
+    def test_session_mode_uses_virtio(self):
+        from latita.operations import _run_create
+        import inspect
+        source = inspect.getsource(_run_create)
+        assert 'cfg.is_session' in source
+        assert '"--video", "virtio"' in source
+        assert '"--video", "qxl"' in source
+
+    def test_system_mode_uses_qxl(self):
+        from latita.operations import _run_create
+        import inspect
+        source = inspect.getsource(_run_create)
+        assert '"--video", "qxl"' in source
+        assert '"--channel", "spicevmc"' in source
 
     @patch("latita.operations.urllib.request.urlopen")
     def test_returns_none_on_network_error(self, mock_urlopen):

@@ -8,6 +8,9 @@ from latita.capsules import (
     capsule_live_commands,
     capsule_live_user,
     capsule_provision_fragment,
+    capsule_verify_command,
+    format_live_commands,
+    format_verify_command,
     list_compatible_capsules,
     merge_provision_fragments,
     resolve_capsules,
@@ -81,6 +84,30 @@ class TestLiveCommands:
     def test_provision_fragment(self):
         cap = {"provision": {"packages": ["vim"]}}
         assert capsule_provision_fragment(cap)["packages"] == ["vim"]
+
+    def test_format_live_commands_substitutes_guest_user(self):
+        cap = {"live": {"commands": ["mkdir -p /home/{guest_user}/workspace", "echo {guest_user}"]}}
+        result = format_live_commands(cap, "dev")
+        assert result == ["mkdir -p /home/dev/workspace", "echo dev"]
+
+    def test_format_live_commands_substitutes_home_dir(self):
+        cap = {"live": {"commands": ["ls {home_dir}", "cd {workspace_dir}"]}}
+        result = format_live_commands(cap, "alice")
+        assert result == ["ls /home/alice", "cd /home/alice/workspace"]
+
+    def test_format_live_commands_preserves_unknown_keys(self):
+        cap = {"live": {"commands": ["echo {unknown_key}"]}}
+        result = format_live_commands(cap, "dev")
+        assert result == ["echo {unknown_key}"]
+
+    def test_format_verify_command(self):
+        cap = {"verify": "test -f /home/{guest_user}/bin/app && echo OK"}
+        result = format_verify_command(cap, "dev")
+        assert result == "test -f /home/dev/bin/app && echo OK"
+
+    def test_format_verify_command_none(self):
+        cap = {}
+        assert format_verify_command(cap, "dev") is None
 
 
 class TestResolve:

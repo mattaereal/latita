@@ -24,3 +24,5 @@ provision:
     - chown -R {guest_user}:{guest_user} /home/{guest_user}/.config /home/{guest_user}/.local
     - restorecon -RF /home/{guest_user}/.config /home/{guest_user}/.local || true
     - runuser -u {guest_user} -- podman info >/dev/null
+
+verify: podman info >/dev/null 2>&1 && echo "[OK] Podman ready" || echo "[FAIL] Podman not available"

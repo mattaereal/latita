@@ -98,4 +98,17 @@ def get_run_count(name: str, cfg: Config | None = None) -> int:
     return int(read_instance_spec(name, cfg).get("run_count", 0))
 
 
+def read_applied_capsules(name: str, cfg: Config | None = None) -> list[str]:
+    return list(read_instance_spec(name, cfg).get("applied_capsules", []))
+
+
+def append_applied_capsule(name: str, capsule_name: str, cfg: Config | None = None) -> None:
+    spec = read_instance_spec(name, cfg)
+    caps = list(spec.get("applied_capsules", []))
+    if capsule_name not in caps:
+        caps.append(capsule_name)
+        spec["applied_capsules"] = caps
+        write_instance_spec(name, spec, cfg)
+
+
 from .config import Config

@@ -46,6 +46,8 @@ from .libvirt import (
 )
 from . import metadata
 from .metadata import (
+    append_applied_capsule,
+    read_applied_capsules,
     read_instance_env,
     read_instance_recipe,
     read_instance_spec,
@@ -636,11 +638,17 @@ def _run_create(
         args.append("--transient")
 
     if recipe["profile"] == "desktop":
-        args.extend([
-            "--graphics", "spice,listen=127.0.0.1",
-            "--video", "qxl",
-            "--channel", "spicevmc",
-        ])
+        if cfg.is_session:
+            args.extend([
+                "--graphics", "spice,listen=127.0.0.1",
+                "--video", "virtio",
+            ])
+        else:
+            args.extend([
+                "--graphics", "spice,listen=127.0.0.1",
+                "--video", "qxl",
+                "--channel", "spicevmc",
+            ])
     else:
         args.extend(["--graphics", "none"])
 
@@ -695,6 +703,7 @@ def _run_create(
         "base_image": recipe["base_image"],
         "osinfo": osinfo,
     }
+    spec["applied_capsules"] = recipe.get("capsules", [])
     write_instance_recipe(recipe["name"], recipe)
     write_instance_spec(recipe["name"], spec)
     write_instance_env(recipe["name"], {
@@ -795,6 +804,11 @@ def destroy_instance(name: str) -> None:
     if vm_exists(name):
         stop_vm_libvirt(name)
         undefine_vm_libvirt(name)
+        if vm_exists(name):
+            raise typer.BadParameter(
+                f"failed to undefine VM '{name}' in libvirt. "
+                "It may have snapshots, checkpoints, or a managed save image."
+            )
     inst = cfg.inst_dir / name
     if inst.exists():
         overlay = inst / f"{name}.qcow2"
@@ -903,11 +917,17 @@ def run_instance(
         ]
 
         if recipe["profile"] == "desktop":
-            args.extend([
-                "--graphics", "spice,listen=127.0.0.1",
-                "--video", "qxl",
-                "--channel", "spicevmc",
-            ])
+            if cfg.is_session:
+                args.extend([
+                    "--graphics", "spice,listen=127.0.0.1",
+                    "--video", "virtio",
+                ])
+            else:
+                args.extend([
+                    "--graphics", "spice,listen=127.0.0.1",
+                    "--video", "qxl",
+                    "--channel", "spicevmc",
+                ])
         else:
             args.extend(["--graphics", "none"])
 
@@ -1004,7 +1024,10 @@ def revive_instance(name: str) -> None:
         args.append("--transient")
 
     if spec.get("graphics") == "spice":
-        args.extend(["--graphics", "spice,listen=127.0.0.1", "--video", "qxl", "--channel", "spicevmc"])
+        if cfg.is_session:
+            args.extend(["--graphics", "spice,listen=127.0.0.1", "--video", "virtio"])
+        else:
+            args.extend(["--graphics", "spice,listen=127.0.0.1", "--video", "qxl", "--channel", "spicevmc"])
     else:
         args.extend(["--graphics", "none"])
 
@@ -1152,10 +1175,8 @@ def connect_instance(name: str) -> None:
 def apply_capsule_live(name: str, capsule_name: str) -> None:
     validate_name(name)
     recipe = read_instance_recipe(name)
+    spec = read_instance_spec(name)
     if not recipe:
-        # For transient VMs without saved recipe, use defaults
-        # The user accepts the risk that capsule compatibility check may pass
-        # even if the VM is actually incompatible
         recipe = {
             "profile": "unknown",
             "os_family": "unknown",
@@ -1174,7 +1195,19 @@ def apply_capsule_live(name: str, capsule_name: str) -> None:
         console.print("[yellow]You can still apply it manually via 'latita ssh {name}'[/yellow]")
         return
 
-    cmds = capsules.capsule_live_commands(capsule)
+    # Check network mode and warn if isolated
+    net_mode = ""
+    if recipe:
+        net_mode = recipe.get("network", {}).get("mode", "")
+    elif spec:
+        net_mode = spec.get("net_mode", "")
+    if net_mode in ("isolated", "none", ""):
+        console.print(
+            f"[yellow]Warning: VM '{name}' has no internet access (network: {net_mode or 'unknown'}). "
+            f"Capsules that download packages or images will fail.[/yellow]"
+        )
+
+    cmds = capsules.format_live_commands(capsule, recipe.get("guest_user", "dev"))
     if not cmds:
         console.print(f"Capsule '{capsule_name}' has no live commands", style="yellow")
         return
@@ -1221,15 +1254,41 @@ def apply_capsule_live(name: str, capsule_name: str) -> None:
     if ssh_port:
         ssh_cmd.extend(["-p", str(ssh_port)])
     ssh_cmd.extend([f"{user}@{ip}", "bash", "-lc", script])
+
     console.print(f"Applying capsule '{capsule_name}' to {name} via SSH...", style="cyan")
-    result = subprocess.run(ssh_cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        console.print(f"[yellow]Capsule apply returned non-zero ({result.returncode})[/yellow]")
-        if result.stderr:
-            console.print(f"[dim]{result.stderr[:500]}[/dim]")
-        console.print("[yellow]Try debugging manually: latita ssh {name}[/yellow]")
-    else:
-        console.print(f"[green]Capsule '{capsule_name}' applied successfully[/green]")
+    success = _stream_ssh(ssh_cmd)
+    if not success:
+        console.print(f"[yellow]Capsule apply failed. Try debugging manually: latita ssh {name}[/yellow]")
+        return
+
+    console.print(f"[green]Capsule '{capsule_name}' applied successfully[/green]")
+    append_applied_capsule(name, capsule_name)
+
+    # Run verify command if defined
+    verify_cmd = capsules.capsule_verify_command(capsule)
+    if verify_cmd:
+        console.print(f"Verifying capsule '{capsule_name}'...", style="dim")
+        formatted_verify = capsules.format_verify_command(capsule, recipe.get("guest_user", "dev"))
+        v_ssh = ssh_cmd[:-1] + [f"{user}@{ip}", "bash", "-lc", formatted_verify]
+        _stream_ssh(v_ssh)
+
+
+def _stream_ssh(cmd: list[str]) -> bool:
+    """Run an SSH command and stream stdout/stderr in real time.
+    Returns True if returncode == 0."""
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    assert proc.stdout is not None
+    try:
+        for line in proc.stdout:
+            print(line, end="")
+    finally:
+        proc.wait()
+    return proc.returncode == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1278,20 +1337,27 @@ def scan_instances() -> list[dict[str, Any]]:
         run_count = spec.get("run_count", 0)
 
         status = state or ("stored" if overlay.exists() else "broken")
+        wan_ip = get_vm_wan_ip(name) if state == "running" else ""
+        cpus = recipe.get("cpus") if recipe else None
+        memory = recipe.get("memory") if recipe else None
         entries.append({
             "name": name,
             "profile": recipe.get("profile", env.get("PROFILE", "unknown")) if recipe else env.get("PROFILE", "unknown"),
             "template": recipe.get("template_name", env.get("TEMPLATE", "")) if recipe else env.get("TEMPLATE", ""),
             "status": status,
             "mgmt_ip": mgmt_ip,
+            "ip": wan_ip or mgmt_ip,
             "interfaces": interfaces,
-            "transient": transient,
-            "destroy_on_stop": destroy_on_stop,
-            "expire_at": expire_at,
-            "max_runs": max_runs,
-            "run_count": run_count,
-            "overlay_exists": overlay.exists(),
-        })
+            "cpus": cpus,
+            "memory": memory,
+        "transient": transient,
+        "destroy_on_stop": destroy_on_stop,
+        "expire_at": expire_at,
+        "max_runs": max_runs,
+        "run_count": run_count,
+        "overlay_exists": overlay.exists(),
+        "applied_capsules": spec.get("applied_capsules", []) if spec else [],
+    })
     return entries
 
 
@@ -1318,6 +1384,8 @@ def list_instances() -> None:
             constraints.append(f"expires {e['expire_at'][:10]}")
         if e["max_runs"] is not None:
             constraints.append(f"runs {e['run_count']}/{e['max_runs']}")
+        if e.get("applied_capsules"):
+            constraints.append("caps: " + ",".join(e["applied_capsules"]))
         table.add_row(
             e["name"],
             e["template"] or e["profile"],

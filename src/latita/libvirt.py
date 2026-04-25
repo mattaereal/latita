@@ -249,7 +249,7 @@ def resume_vm_libvirt(name: str) -> None:
 
 
 def undefine_vm_libvirt(name: str) -> None:
-    virsh("undefine", name, check=False)
+    virsh("undefine", "--managed-save", name, check=False)
 
 
 from .config import Config

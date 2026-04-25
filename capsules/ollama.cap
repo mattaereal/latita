@@ -19,3 +19,5 @@ live:
   commands:
     - ollama --version || (curl -fsSL https://ollama.com/install.sh | sh)
     - systemctl --user start ollama 2>/dev/null || true
+
+verify: ollama --version 2>/dev/null && echo "[OK] Ollama ready" || echo "[FAIL] Ollama not available"

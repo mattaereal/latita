@@ -14,6 +14,7 @@ Latita replaces the previous `ephemctl` bash/python monolith with a clean Python
 - `libvirt.py` — thin wrapper around `virsh` and `virt-install`
 - `metadata.py` — JSON-based instance state (recipe, spec, env)
 - `cli.py` — Typer CLI with subcommands for VMs, capsules, templates, and the `run` one-shot runner
+- `tui.py` — Textual TUI dashboard (two-pane, keyboard-driven) for VM list, actions, templates, and capsules
 - `prompts.py` — tiered interactive wizards (simple, advanced, full) and template generator
 
 ### File formats
@@ -104,4 +105,3 @@ Run `.venv3/bin/python -m pytest tests/` for the full suite (195 tests including
 
 - **Snapshot / clone support**: `latita snapshot <name>` and `latita clone <name> <new-name>` using `qemu-img` backing chains.
 - **Template marketplace**: Share templates via a Git-based registry or simple HTTP index.
-- **TUI dashboard**: A `textual` or `rich` live view of running VMs with resource usage.
