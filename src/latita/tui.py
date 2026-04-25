@@ -147,7 +147,11 @@ class FormScreen(Screen[dict[str, Any] | None]):
             id="profile",
         )
         yield Input(placeholder="VM name", id="name")
-        yield Checkbox("Enable networking", value=True, id="network")
+        yield Select(
+            [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated")],
+            value="nat",
+            id="network_mode",
+        )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-create":
@@ -158,12 +162,12 @@ class FormScreen(Screen[dict[str, Any] | None]):
     def action_submit(self) -> None:
         name_widget = self.query_one("#name", Input)
         profile_widget = self.query_one("#profile", Select)
-        network_widget = self.query_one("#network", Checkbox)
+        net_widget = self.query_one("#network_mode", Select)
         error_widget = self.query_one("#form-error", Static)
 
         name = name_widget.value.strip()
         profile = profile_widget.value
-        network = network_widget.value
+        net_mode = str(net_widget.value) if net_widget.value else "nat"
 
         if not name:
             error_widget.update("Name is required")
@@ -171,7 +175,6 @@ class FormScreen(Screen[dict[str, Any] | None]):
             return
         if profile is None:
             profile = "headless"
-        net_mode = "nat" if network else "isolated"
         result = self._build_result(name, profile, net_mode)
         self.dismiss(result)
 
@@ -204,7 +207,11 @@ class CreateVMScreen(FormScreen):
             id="profile",
         )
         yield Input(placeholder="VM name", id="name")
-        yield Checkbox("Enable networking", value=True, id="network")
+        yield Select(
+            [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated")],
+            value="nat",
+            id="network_mode",
+        )
         yield Checkbox("Transient (auto-remove on shutdown)", value=False, id="transient")
         yield Checkbox("Destroy on stop", value=False, id="destroy_on_stop")
 
@@ -240,7 +247,11 @@ class RunVMScreen(FormScreen):
             id="profile",
         )
         yield Input(placeholder="VM name", id="name")
-        yield Checkbox("Enable networking", value=True, id="network")
+        yield Select(
+            [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated")],
+            value="nat",
+            id="network_mode",
+        )
         yield Input(placeholder="Command to run inside VM (optional, e.g. uname -a)", id="command")
         yield Static("This VM is transient and will be destroyed on shutdown.", id="run-warn", classes="form-warn")
 

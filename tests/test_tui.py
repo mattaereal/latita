@@ -225,7 +225,7 @@ class TestCreateVMScreen:
                 await pilot.pause()
                 assert screen.query_one("#profile", Select) is not None
                 assert screen.query_one("#name", Input) is not None
-                assert screen.query_one("#network", Checkbox) is not None
+                assert screen.query_one("#network_mode", Select) is not None
                 assert screen.query_one("#transient", Checkbox) is not None
                 assert screen.query_one("#destroy_on_stop", Checkbox) is not None
                 assert screen.query_one("#btn-create", Button) is not None
@@ -254,6 +254,29 @@ class TestCreateVMScreen:
                 assert len(results) == 1
                 assert results[0]["mode"] == "create"
                 assert results[0]["recipe"]["name"] == "testvm"
+                assert results[0]["recipe"]["network"]["mode"] == "nat"
+                await pilot.press("q")
+        _run_async(_test())
+
+    def test_submit_isolated_network(self):
+        screen = CreateVMScreen()
+        results = []
+
+        def _cb(result):
+            results.append(result)
+
+        async def _test():
+            app = Dashboard()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await app.push_screen(screen, _cb)
+                await pilot.pause()
+                screen.query_one("#name", Input).value = "testvm"
+                screen.query_one("#network_mode", Select).value = "isolated"
+                screen.action_submit()
+                await pilot.pause()
+                assert len(results) == 1
+                assert results[0]["recipe"]["network"]["mode"] == "isolated"
                 await pilot.press("q")
         _run_async(_test())
 
@@ -315,7 +338,7 @@ class TestRunVMScreen:
                 await pilot.pause()
                 assert screen.query_one("#profile", Select) is not None
                 assert screen.query_one("#name", Input) is not None
-                assert screen.query_one("#network", Checkbox) is not None
+                assert screen.query_one("#network_mode", Select) is not None
                 assert screen.query_one("#command", Input) is not None
                 assert screen.query_one("#run-warn", Static) is not None
                 assert screen.query_one("#btn-create", Button) is not None
@@ -345,6 +368,29 @@ class TestRunVMScreen:
                 assert results[0]["mode"] == "run"
                 assert results[0]["recipe"]["name"] == "runvm"
                 assert results[0]["recipe"]["command"] == "uname -a"
+                assert results[0]["recipe"]["network"]["mode"] == "nat"
+                await pilot.press("q")
+        _run_async(_test())
+
+    def test_submit_isolated_network(self):
+        screen = RunVMScreen()
+        results = []
+
+        def _cb(result):
+            results.append(result)
+
+        async def _test():
+            app = Dashboard()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await app.push_screen(screen, _cb)
+                await pilot.pause()
+                screen.query_one("#name", Input).value = "runvm"
+                screen.query_one("#network_mode", Select).value = "isolated"
+                screen.action_submit()
+                await pilot.pause()
+                assert len(results) == 1
+                assert results[0]["recipe"]["network"]["mode"] == "isolated"
                 await pilot.press("q")
         _run_async(_test())
 
