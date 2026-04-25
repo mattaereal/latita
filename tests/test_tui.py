@@ -172,8 +172,8 @@ class TestScreensStructure:
                 screen = TemplatesScreen()
                 await app.push_screen(screen)
                 await pilot.pause()
-                assert screen.query_one("#tpl-detail-scroll", ScrollableContainer) is not None
-                assert screen.query_one("#tpl-detail", Static) is not None
+                assert screen.query_one("#browser-detail-scroll", ScrollableContainer) is not None
+                assert screen.query_one("#browser-detail", Static) is not None
                 await pilot.press("escape")
                 await pilot.press("q")
         _run_async(_test())
@@ -188,8 +188,8 @@ class TestScreensStructure:
                 screen = CapsulesScreen()
                 await app.push_screen(screen)
                 await pilot.pause()
-                assert screen.query_one("#cap-detail-scroll", ScrollableContainer) is not None
-                assert screen.query_one("#cap-detail", Static) is not None
+                assert screen.query_one("#browser-detail-scroll", ScrollableContainer) is not None
+                assert screen.query_one("#browser-detail", Static) is not None
                 await pilot.press("escape")
                 await pilot.press("q")
         _run_async(_test())
@@ -297,7 +297,7 @@ class TestCreateVMScreen:
                 screen.action_submit()
                 await pilot.pause()
                 assert len(results) == 0
-                error = screen.query_one("#create-error", Static)
+                error = screen.query_one("#form-error", Static)
                 assert "required" in error._Static__content.lower()
                 await pilot.press("escape")
                 await pilot.press("q")
@@ -364,7 +364,7 @@ class TestRunVMScreen:
                 screen.action_submit()
                 await pilot.pause()
                 assert len(results) == 0
-                error = screen.query_one("#run-error", Static)
+                error = screen.query_one("#form-error", Static)
                 assert "required" in error._Static__content.lower()
                 await pilot.press("escape")
                 await pilot.press("q")

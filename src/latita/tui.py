@@ -133,7 +133,7 @@ class FormScreen(Screen[dict[str, Any] | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id=self._box_id, classes="form-box"):
             yield Static(self._title, id="form-title", classes="form-title")
-            yield self._compose_fields()
+            yield from self._compose_fields()
             yield Static("", id="form-error", classes="form-error")
             with Horizontal(id="form-buttons", classes="form-buttons"):
                 yield Button("Create", id="btn-create", variant="primary")
