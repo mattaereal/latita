@@ -86,31 +86,42 @@ class ActionItem(ListItem):
 # Confirm modal
 # ---------------------------------------------------------------------------
 
-class ConfirmScreen(Screen):
-    """Simple yes/no modal."""
+class TypeToConfirmScreen(Screen):
+    """Type a confirmation word + Enter to proceed. Prevents accidental Enter spam."""
 
     BINDINGS = [
-        Binding("y", "yes", "Yes", show=False),
-        Binding("n", "no", "No", show=False),
-        Binding("enter", "yes", "Yes", show=False),
-        Binding("escape", "no", "No", show=False),
+        Binding("escape", "cancel", "Cancel", show=False),
     ]
 
-    def __init__(self, message: str, on_result: Callable[[bool], None]) -> None:
+    def __init__(self, message: str, confirm_word: str, on_result: Callable[[bool], None]) -> None:
         super().__init__()
         self.message = message
+        self.confirm_word = confirm_word
         self.on_result = on_result
 
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm-box"):
             yield Static(self.message, id="confirm-msg")
-            yield Static("[y / Enter] Yes    [n / Esc] No", id="confirm-hint")
+            yield Static(f"Type '{self.confirm_word}' and press Enter to confirm. Esc to cancel.", id="confirm-hint")
+            yield Input(placeholder=f"type: {self.confirm_word}", id="confirm-input")
+            yield Static("", id="confirm-error")
 
-    def action_yes(self) -> None:
-        self.app.pop_screen()
-        self.on_result(True)
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "confirm-input":
+            self._check()
 
-    def action_no(self) -> None:
+    def _check(self) -> None:
+        inp = self.query_one("#confirm-input", Input)
+        err = self.query_one("#confirm-error", Static)
+        if inp.value.strip().lower() == self.confirm_word.lower():
+            self.app.pop_screen()
+            self.on_result(True)
+        else:
+            err.update(f"Wrong. Expected '{self.confirm_word}'.")
+            inp.value = ""
+            inp.focus()
+
+    def action_cancel(self) -> None:
         self.app.pop_screen()
         self.on_result(False)
 
@@ -125,6 +136,8 @@ class FormScreen(Screen[dict[str, Any] | None]):
     BINDINGS = [
         Binding("escape", "dismiss", "Cancel", show=False),
     ]
+
+    _name_counters: dict[str, int] = {}
 
     def __init__(self, title: str, box_id: str) -> None:
         super().__init__()
@@ -157,6 +170,11 @@ class FormScreen(Screen[dict[str, Any] | None]):
             opts = [("Auto-detect", "")]
         return (opts, default)
 
+    def _suggest_name(self, profile: str) -> str:
+        """Return the next sequential name for a profile."""
+        self._name_counters[profile] = self._name_counters.get(profile, 0) + 1
+        return f"{profile}-{self._name_counters[profile]}"
+
     def compose(self) -> ComposeResult:
         with Vertical(id=self._box_id, classes="form-box"):
             yield Static(self._title, id="form-title", classes="form-title")
@@ -185,7 +203,33 @@ class FormScreen(Screen[dict[str, Any] | None]):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "profile":
-            self._toggle_video_visibility(str(event.value) if event.value else "headless")
+            profile = str(event.value) if event.value else "headless"
+            self._toggle_video_visibility(profile)
+            # Auto-fill suggested name when profile changes
+            name_widget = self.query_one("#name", Input)
+            if not name_widget.value.strip():
+                name_widget.value = self._suggest_name(profile)
+                name_widget.focus()
+        elif event.select.id == "network_mode":
+            self._focus_next_after("#network_mode")
+        elif event.select.id == "video_model":
+            self._focus_next_after("#video_model")
+
+    def _focus_next_after(self, widget_id: str) -> None:
+        """Focus the next focusable widget after the given one."""
+        order = ["#profile", "#name", "#network_mode", "#video_model", "#transient", "#destroy_on_stop", "#command", "#btn-create", "#btn-cancel"]
+        try:
+            idx = order.index(widget_id)
+        except ValueError:
+            return
+        for next_id in order[idx + 1:]:
+            try:
+                widget = self.query_one(next_id)
+                if hasattr(widget, "focus") and getattr(widget, "display", True) != "none":
+                    widget.focus()
+                    break
+            except Exception:
+                continue
 
     def _toggle_video_visibility(self, profile: str) -> None:
         video = self.query_one("#video_model", Select)
@@ -277,21 +321,6 @@ class RunVMScreen(FormScreen):
         super().__init__("Run one-shot VM", "run-box")
 
     def _compose_fields(self) -> ComposeResult:
-        yield Select(
-            [("headless", "headless"), ("desktop", "desktop")],
-            value="headless",
-            id="profile",
-        )
-        yield Input(placeholder="VM name", id="name")
-        yield Select(
-            [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated"), ("None (no network device)", "none")],
-            value="nat",
-            id="network_mode",
-        )
-        yield Input(placeholder="Command to run inside VM (optional, e.g. uname -a)", id="command")
-        yield Static("This VM is transient and will be destroyed on shutdown.", id="run-warn", classes="form-warn")
-
-    def _compose_fields(self) -> ComposeResult:
         yield from super()._compose_fields()
         yield Input(placeholder="Command to run inside VM (optional, e.g. uname -a)", id="command")
         yield Static("This VM is transient and will be destroyed on shutdown.", id="run-warn", classes="form-warn")
@@ -337,7 +366,14 @@ class ApplyCapsuleScreen(Screen[str | None]):
         with Vertical(id="cap-box", classes="form-box"):
             yield Static(f"Apply capsule to {self.vm_name}", id="cap-title", classes="form-title")
             if self._net_warn:
-                yield Static(self._net_warn, id="cap-net-warn")
+                yield Static(
+                    "\n".join([
+                        "NETWORK WARNING",
+                        self._net_warn,
+                        "Capsules that download will fail!",
+                    ]),
+                    id="cap-net-warn",
+                )
             caps = list(list_capsules().keys())
             if caps:
                 yield Select([(c, c) for c in caps], value=caps[0], id="capsule")
@@ -599,7 +635,7 @@ class BrowserScreen(Screen):
                 self._refresh_items()
                 app.notify(f"'{name}' deleted")
 
-        self.app.push_screen(ConfirmScreen(f"Delete '{name}'?", _on_result))
+        self.app.push_screen(TypeToConfirmScreen(f"Delete '{name}'?", "delete", _on_result))
 
     def action_rename(self) -> None:
         name = self._selected_name()
@@ -814,13 +850,13 @@ class Dashboard(App):
         Binding("k", "connect", "Connect", show=False),
         Binding("a", "apply_capsule", "Apply Capsule", show=False),
         Binding("i", "info", "Info", show=False),
+        Binding("R", "refresh", "Refresh", show=False),
     ]
 
     selected_vm = reactive(None)
 
     def __init__(self) -> None:
         super().__init__()
-        self._refresh_timer: Optional[Timer] = None
         self._vm_list: list[dict[str, Any]] = []
         self._action_items: dict[str, ActionItem] = {}
 
@@ -832,7 +868,10 @@ class Dashboard(App):
             with Vertical(id="right-pane"):
                 yield Static("Actions", id="right-title")
                 yield ListView(id="action-list")
-        yield Static("Select a VM and press Enter, or choose an action →", id="hint-pane")
+        yield Static(
+            "c:Create  r:Run  s:Start  S:Stop  D:Destroy  h:SSH  a:Apply  t:Templates  p:Capsules  R:Refresh  q:Quit",
+            id="hint-pane",
+        )
         yield Static("", id="statusbar")
 
     def on_mount(self) -> None:
@@ -840,7 +879,6 @@ class Dashboard(App):
         table.add_columns("Name", "Status", "IP", "Profile", "CPUs", "Mem")
         self._build_action_list()
         self._refresh_vm_list()
-        self._refresh_timer = self.set_interval(2.0, self._refresh_vm_list)
         table.focus()
 
     def _build_action_list(self) -> None:
@@ -1045,14 +1083,49 @@ class Dashboard(App):
         if method:
             method()
 
-    def _pause_refresh(self) -> None:
-        if self._refresh_timer:
-            self._refresh_timer.stop()
-            self._refresh_timer = None
-
-    def _resume_refresh(self) -> None:
+    def _trigger_refresh(self) -> None:
+        """Refresh VM list after a state-changing action completes."""
         self._refresh_vm_list()
-        self._refresh_timer = self.set_interval(2.0, self._refresh_vm_list)
+
+    # --- Unified runner ------------------------------------------------------
+
+    def _run_command(self, fn: Callable[[], Any], label: str) -> Any:
+        """Suspend TUI, run fn in the real terminal, then prompt to return."""
+        with self.suspend():
+            from latita import ui as _ui
+            from latita import operations as _ops
+            from latita import capsules as _caps
+            from latita import utils as _utils
+            from latita import prompts as _prompts
+
+            plain_console = Console(file=sys.__stdout__, color_system="auto", width=120)
+            _modules = [_ui, _ops, _caps, _utils, _prompts]
+            _old = {mod: getattr(mod, "console", None) for mod in _modules}
+            for mod in _modules:
+                if _old[mod] is not None:
+                    mod.console = plain_console
+
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    try:
+                        result = fn()
+                    except KeyboardInterrupt:
+                        print("\nCanceled.")
+                        result = None
+                    except Exception as exc:
+                        print(f"\nError: {exc}")
+                        result = None
+                print(f"\n[latita] {label} — Press Enter to return to menu...")
+                try:
+                    input()
+                except (EOFError, KeyboardInterrupt):
+                    pass
+            finally:
+                for mod in _modules:
+                    if _old[mod] is not None:
+                        mod.console = _old[mod]
+            return result
 
     # --- Screen result callbacks ---------------------------------------------
 
@@ -1065,6 +1138,7 @@ class Dashboard(App):
             lambda: create_instance(template_name, name=recipe.get("name"), overrides=recipe),
             "Create VM",
         )
+        self._trigger_refresh()
 
     def _on_run_done(self, result: dict[str, Any] | None) -> None:
         if result is None:
@@ -1080,6 +1154,7 @@ class Dashboard(App):
             ),
             "Run one-shot VM",
         )
+        self._trigger_refresh()
 
     def _on_capsule_chosen(self, capsule_name: str | None) -> None:
         if capsule_name is None:
@@ -1096,6 +1171,9 @@ class Dashboard(App):
 
     def action_quit(self) -> None:
         self.exit()
+
+    def action_refresh(self) -> None:
+        self._trigger_refresh()
 
     def action_create(self) -> None:
         self.push_screen(CreateVMScreen(), self._on_create_done)
@@ -1133,6 +1211,7 @@ class Dashboard(App):
             self.notify("Select a VM first", severity="warning")
             return
         self._run_command(lambda: start_instance(name), f"Start {name}")
+        self._trigger_refresh()
 
     def action_stop(self) -> None:
         name = self._selected_name()
@@ -1140,6 +1219,7 @@ class Dashboard(App):
             self.notify("Select a VM first", severity="warning")
             return
         self._run_command(lambda: stop_instance(name), f"Stop {name}")
+        self._trigger_refresh()
 
     def action_destroy(self) -> None:
         name = self._selected_name()
@@ -1150,8 +1230,9 @@ class Dashboard(App):
         def _on_result(confirmed: bool) -> None:
             if confirmed:
                 self._run_command(lambda: destroy_instance(name), f"Destroy {name}")
+                self._trigger_refresh()
 
-        self.push_screen(ConfirmScreen(f"Destroy VM '{name}' and shred its disk?", _on_result))
+        self.push_screen(TypeToConfirmScreen(f"Destroy VM '{name}' and shred its disk?", "destroy", _on_result))
 
     def action_ssh(self) -> None:
         name = self._selected_name()

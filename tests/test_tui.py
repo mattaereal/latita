@@ -13,7 +13,7 @@ from latita.tui import (
     Dashboard,
     TemplatesScreen,
     CapsulesScreen,
-    ConfirmScreen,
+    TypeToConfirmScreen,
     CreateVMScreen,
     RunVMScreen,
     ApplyCapsuleScreen,
@@ -51,6 +51,7 @@ class TestDashboardStructure:
         assert "a" in keys
         assert "t" in keys
         assert "p" in keys
+        assert "R" in keys
 
 
 class TestDashboardVmList:
@@ -195,8 +196,8 @@ class TestScreensStructure:
         _run_async(_test())
 
 
-class TestConfirmScreen:
-    def test_confirm_screen_composes(self):
+class TestTypeToConfirmScreen:
+    def test_typed_confirm_composes(self):
         async def _test():
             def _cb(result: bool) -> None:
                 pass
@@ -204,12 +205,43 @@ class TestConfirmScreen:
             app = Dashboard()
             async with app.run_test() as pilot:
                 await pilot.pause()
-                app.push_screen(ConfirmScreen("Are you sure?", _cb))
+                app.push_screen(TypeToConfirmScreen("Delete 'test' ?", "delete", _cb))
                 await pilot.pause()
-                assert isinstance(app.screen, ConfirmScreen)
-                await pilot.press("n")
+                assert isinstance(app.screen, TypeToConfirmScreen)
+                # Cancel with escape
+                await pilot.press("escape")
                 await pilot.pause()
-                assert not isinstance(app.screen, ConfirmScreen)
+                assert not isinstance(app.screen, TypeToConfirmScreen)
+                await pilot.press("q")
+        _run_async(_test())
+
+    def test_typed_confirm_requires_word(self):
+        async def _test():
+            results = []
+
+            def _cb(result: bool) -> None:
+                results.append(result)
+
+            app = Dashboard()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app.push_screen(TypeToConfirmScreen("Destroy VM ?", "destroy", _cb))
+                await pilot.pause()
+                # Submit wrong word
+                screen = app.screen
+                assert isinstance(screen, TypeToConfirmScreen)
+                inp = screen.query_one("#confirm-input", Input)
+                inp.value = "wrong"
+                await pilot.press("enter")
+                await pilot.pause()
+                # Should still be on screen, showing error
+                assert isinstance(app.screen, TypeToConfirmScreen)
+                # Now type correct word
+                inp.value = "destroy"
+                await pilot.press("enter")
+                await pilot.pause()
+                assert not isinstance(app.screen, TypeToConfirmScreen)
+                assert results == [True]
                 await pilot.press("q")
         _run_async(_test())
 
@@ -347,6 +379,8 @@ class TestCreateVMScreen:
                 await pilot.pause()
                 await app.push_screen(screen, _cb)
                 await pilot.pause()
+                # Clear the auto-suggested name
+                screen.query_one("#name", Input).value = ""
                 screen.action_submit()
                 await pilot.pause()
                 assert len(results) == 0
@@ -467,6 +501,8 @@ class TestRunVMScreen:
                 await pilot.pause()
                 await app.push_screen(screen, _cb)
                 await pilot.pause()
+                # Clear the auto-suggested name
+                screen.query_one("#name", Input).value = ""
                 screen.action_submit()
                 await pilot.pause()
                 assert len(results) == 0

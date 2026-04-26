@@ -1,10 +1,12 @@
 /* tui.tcss — Latita TUI stylesheet */
 
 /* Confirm modal */
-ConfirmScreen { align: center middle; }
+TypeToConfirmScreen { align: center middle; }
 #confirm-box { width: 60; height: auto; background: #1e1e2e; border: solid #89b4fa; padding: 1 2; }
 #confirm-msg { color: #cdd6f4; text-align: center; }
 #confirm-hint { color: #7f849c; text-align: center; margin-top: 1; }
+#confirm-input { margin-top: 1; }
+#confirm-error { color: #f38ba8; text-align: center; height: 1; margin-top: 1; }
 
 /* Form screens (Create VM, Run VM, Apply Capsule) */
 .form-screen { align: center middle; }
@@ -12,11 +14,12 @@ ConfirmScreen { align: center middle; }
 .form-title { color: #89b4fa; text-style: bold; text-align: center; }
 .form-error { color: #f38ba8; text-align: center; height: 1; }
 .form-warn { color: #f9e2af; text-align: center; }
+.form-hint { color: #7f849c; text-align: center; height: 1; }
 .form-buttons { layout: horizontal; height: auto; margin-top: 1; }
-.form-buttons Button { width: 1fr; }
+.form-buttons Button { width: 1fr; padding: 0 1; height: auto; }
 
 /* Apply capsule */
-#cap-net-warn { color: #f9e2af; text-align: center; }
+#cap-net-warn { color: #f38ba8; text-style: bold; text-align: center; height: 3; }
 
 /* Info screen */
 InfoScreen { align: center middle; }
