@@ -183,6 +183,7 @@ class FormScreen(Screen[dict[str, Any] | None]):
         self._title = title
         self._box_id = box_id
         self._video_options = self._load_video_options()
+        self._last_profile = "headless"
 
     @staticmethod
     def _load_video_options() -> tuple[list[tuple[str, str]], str]:
@@ -214,6 +215,24 @@ class FormScreen(Screen[dict[str, Any] | None]):
         self._name_counters[profile] = self._name_counters.get(profile, 0) + 1
         return f"{profile}-{self._name_counters[profile]}"
 
+    def _update_name_on_profile_change(self, new_profile: str) -> None:
+        """Smart name update: keep custom names, replace auto-generated ones."""
+        name_widget = self.query_one("#name", Input)
+        current = name_widget.value.strip()
+        if not current:
+            # Empty: suggest new name
+            name_widget.value = self._suggest_name(new_profile)
+        elif self._is_auto_generated_name(current, self._last_profile):
+            # Matches old auto pattern: replace with new
+            name_widget.value = self._suggest_name(new_profile)
+        # else: custom name — leave it alone
+        name_widget.focus()
+
+    @staticmethod
+    def _is_auto_generated_name(name: str, profile: str) -> bool:
+        import re
+        return bool(re.fullmatch(rf"{re.escape(profile)}-\d+", name))
+
     def compose(self) -> ComposeResult:
         with Vertical(id=self._box_id, classes="form-box"):
             yield Static(self._title, id="form-title", classes="form-title")
@@ -242,13 +261,11 @@ class FormScreen(Screen[dict[str, Any] | None]):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "profile":
-            profile = str(event.value) if event.value else "headless"
-            self._toggle_video_visibility(profile)
-            # Auto-fill suggested name when profile changes
-            name_widget = self.query_one("#name", Input)
-            if not name_widget.value.strip():
-                name_widget.value = self._suggest_name(profile)
-                name_widget.focus()
+            new_profile = str(event.value) if event.value else "headless"
+            self._toggle_video_visibility(new_profile)
+            self._update_name_on_profile_change(new_profile)
+            self._last_profile = new_profile
+            self._focus_next_after("#profile")
         elif event.select.id == "network_mode":
             self._focus_next_after("#network_mode")
         elif event.select.id == "video_model":
@@ -264,7 +281,7 @@ class FormScreen(Screen[dict[str, Any] | None]):
         for next_id in order[idx + 1:]:
             try:
                 widget = self.query_one(next_id)
-                if hasattr(widget, "focus") and getattr(widget, "display", True) != "none":
+                if hasattr(widget, "focus") and widget.display:
                     widget.focus()
                     break
             except Exception:
