@@ -2,7 +2,7 @@ description: Run code-server via podman
 compatibility:
   profiles: [headless, desktop]
   os_family: [fedora, ubuntu]
-depends_on: [podman-host]
+depends_on: []
 
 provision:
   user_commands:

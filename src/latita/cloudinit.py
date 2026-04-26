@@ -249,21 +249,17 @@ def _user_definition(
         "name": context["guest_user"],
         "groups": ["wheel"],
         "shell": "/bin/bash",
-        "ssh_authorized_keys": [context["host_pubkey"]],
+        "ssh_authorized_keys": [
+            k for k in (context["host_pubkey"], context["lab_pubkey"]) if k
+        ],
     }
     if passwordless_sudo:
         user["sudo"] = "ALL=(ALL) NOPASSWD:ALL"
     else:
         user["sudo"] = "ALL=(ALL) ALL"
-    if profile == "headless":
-        user["ssh_authorized_keys"].append(context["lab_pubkey"])
-        if context.get("login_hash"):
-            user["passwd"] = context["login_hash"]
-            user["lock_passwd"] = False
-    else:
-        if context.get("login_hash"):
-            user["lock_passwd"] = False
-            user["passwd"] = context["login_hash"]
+    if context.get("login_hash"):
+        user["lock_passwd"] = False
+        user["passwd"] = context["login_hash"]
     return user
 
 

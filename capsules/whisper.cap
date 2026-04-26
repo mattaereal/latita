@@ -2,7 +2,7 @@ description: Whisper.cpp for local transcription
 compatibility:
   profiles: [headless, desktop]
   os_family: [fedora, ubuntu]
-depends_on: [ollama]
+depends_on: []
 
 provision:
   packages:

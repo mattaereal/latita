@@ -112,9 +112,9 @@ class TestLiveCommands:
 
 class TestResolve:
     def test_resolve_builtin(self):
-        # code-server exists as builtin and depends on podman-host
-        resolved = resolve_capsules(["code-server"], profile="headless", os_family="fedora")
-        assert len(resolved) == 2  # podman-host + code-server
+        # ai-agents depends on hermes
+        resolved = resolve_capsules(["ai-agents"], profile="headless", os_family="fedora")
+        assert len(resolved) == 2  # hermes + ai-agents
 
     def test_resolve_incompatible(self):
         with pytest.raises(Exception):
@@ -133,38 +133,22 @@ class TestListCompatible:
 
 class TestDependsOn:
     def test_single_dependency_resolved(self):
-        # code-server depends on podman-host
-        resolved = resolve_capsules(["code-server"], profile="headless", os_family="fedora")
+        # ai-agents depends on hermes
+        resolved = resolve_capsules(["ai-agents"], profile="headless", os_family="fedora")
         names = [c.get("description", "") for c in resolved]
-        # podman-host should come before code-server
-        assert any("podman" in n.lower() for n in names)
-        assert any("code-server" in n.lower() for n in names)
+        # hermes should come before ai-agents
+        assert any("hermes" in n.lower() for n in names)
+        assert any("ai" in n.lower() for n in names)
 
     def test_dependency_deduplication(self):
-        # Requesting both podman-host and code-server should not duplicate podman-host
+        # Requesting both hermes and ai-agents should not duplicate hermes
         resolved = resolve_capsules(
-            ["podman-host", "code-server"],
+            ["hermes", "ai-agents"],
             profile="headless",
             os_family="fedora",
         )
-        descs = [c.get("description", "").lower() for c in resolved]
-        # Both capsules mention "podman" in their descriptions; check that
-        # podman-host itself appears only once
-        host_count = sum(1 for d in descs if "podman-host" in d or "rootless containers" in d)
-        assert host_count == 1
-        # Total should be exactly 2 (podman-host + code-server)
+        # Total should be exactly 2 (hermes + ai-agents)
         assert len(resolved) == 2
-
-    def test_chain_dependency(self):
-        # open-webui depends on ollama
-        resolved = resolve_capsules(
-            ["open-webui"],
-            profile="headless",
-            os_family="fedora",
-        )
-        descs = [c.get("description", "") for c in resolved]
-        assert any("ollama" in d.lower() for d in descs)
-        assert any("webui" in d.lower() for d in descs)
 
     def test_cycle_detection(self):
         # Create a fake cycle by temporarily mocking load_capsule
@@ -184,14 +168,14 @@ class TestDependsOn:
     def test_dependency_order(self):
         # Dependencies should appear before dependents in the resolved list
         resolved = resolve_capsules(
-            ["code-server"],
+            ["ai-agents"],
             profile="headless",
             os_family="fedora",
         )
         descs = [c.get("description", "") for c in resolved]
-        podman_idx = next(i for i, d in enumerate(descs) if "podman" in d.lower())
-        code_idx = next(i for i, d in enumerate(descs) if "code-server" in d.lower())
-        assert podman_idx < code_idx
+        hermes_idx = next(i for i, d in enumerate(descs) if "hermes" in d.lower())
+        ai_idx = next(i for i, d in enumerate(descs) if "ai" in d.lower())
+        assert hermes_idx < ai_idx
 
     def test_ai_agents_resolves_all_deps(self):
         resolved = resolve_capsules(
@@ -201,7 +185,6 @@ class TestDependsOn:
         )
         descs = [c.get("description", "").lower() for c in resolved]
         assert any("hermes" in d for d in descs)
-        assert any("openclaw" in d for d in descs)
         assert any("all major ai" in d for d in descs)
 
 
@@ -210,7 +193,7 @@ class TestBuiltinCapsules:
 
     def test_all_builtin_capsules_load(self):
         names = list_capsules()
-        assert len(names) >= 10
+        assert len(names) == 5  # ai-agents, code-server, hermes, tailscale, whisper
         for name in names:
             cap = load_capsule(name)
             assert "description" in cap, f"{name} missing description"

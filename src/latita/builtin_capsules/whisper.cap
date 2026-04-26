@@ -2,7 +2,7 @@ description: Whisper.cpp for local transcription
 compatibility:
   profiles: [headless, desktop]
   os_family: [fedora, ubuntu]
-depends_on: [ollama]
+depends_on: []
 
 provision:
   packages:
@@ -23,3 +23,5 @@ live:
   user: dev
   commands:
     - cd /home/{guest_user}/whisper.cpp && make 2>/dev/null || true
+
+verify: test -f /home/{guest_user}/whisper.cpp/main && echo "[OK] Whisper.cpp built" || echo "[FAIL] Whisper.cpp not built"

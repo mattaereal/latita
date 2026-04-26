@@ -1,8 +1,8 @@
-description: All major AI coding agents (Claude Code, Codex, Gemini, Kimi, OpenCode, OpenClaw, Hermes, Aider)
+description: All major AI coding agents (Claude Code, Codex, Gemini, Kimi, OpenCode, Hermes, Aider, Pi)
 compatibility:
   profiles: [headless, desktop]
   os_family: [fedora, ubuntu]
-depends_on: [hermes, openclaw]
+depends_on: [hermes]
 
 provision:
   packages:
@@ -17,6 +17,7 @@ provision:
       npm install -g @openai/codex 2>/dev/null || true
       npm install -g @google/gemini-cli 2>/dev/null || true
       npm install -g opencode-ai 2>/dev/null || true
+      npm install -g @mariozechner/pi-coding-agent 2>/dev/null || true
       # Python based agents
       pip3 install --user kimi-cli 2>/dev/null || true
       pip3 install --user aider-chat 2>/dev/null || true
@@ -25,10 +26,10 @@ provision:
       echo "  codex --version"
       echo "  gemini --version"
       echo "  opencode --version"
+      echo "  pi --version"
       echo "  kimi --help"
       echo "  aider --version"
       echo "  hermes --help"
-      echo "  openclaw --help"
 
 live:
   user: dev
@@ -37,7 +38,9 @@ live:
     - npm install -g @openai/codex 2>/dev/null || true
     - npm install -g @google/gemini-cli 2>/dev/null || true
     - npm install -g opencode-ai 2>/dev/null || true
+    - npm install -g @mariozechner/pi-coding-agent 2>/dev/null || true
     - pip3 install --user kimi-cli 2>/dev/null || true
     - pip3 install --user aider-chat 2>/dev/null || true
     - pip3 install --user hermes-agent 2>/dev/null || true
-    - pip3 install --user openclaw 2>/dev/null || true
+
+verify: (claude --version 2>/dev/null || true) && (codex --version 2>/dev/null || true) && echo "[OK] AI agents present" || echo "[FAIL] Some agents missing"

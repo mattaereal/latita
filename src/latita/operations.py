@@ -1273,6 +1273,47 @@ def connect_instance(name: str) -> None:
 
 
 
+def _wait_for_ssh_ready(ip: str, user: str, key: str, port: str | None, max_wait: float = 60.0) -> bool:
+    """Poll SSH until key authentication succeeds or timeout.
+
+    This handles the race condition where cloud-init has not yet created
+    the guest user and injected authorized_keys. Retries every 2 seconds.
+    """
+    import time
+
+    test_cmd = [
+        "ssh",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=3",
+        "-i", key,
+    ]
+    if port:
+        test_cmd.extend(["-p", str(port)])
+    test_cmd.extend([f"{user}@{ip}", "true"])
+
+    start = time.monotonic()
+    attempt = 0
+    while time.monotonic() - start < max_wait:
+        attempt += 1
+        result = subprocess.run(test_cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            if attempt > 1:
+                console.print(f"  [green]SSH ready after {attempt} attempts[/green]")
+            return True
+        stderr = result.stderr.lower()
+        if "permission denied" in stderr or "connection refused" in stderr or "connection timed out" in stderr:
+            time.sleep(2.0)
+            continue
+        # Any other error is unexpected — bail immediately
+        console.print(f"[yellow]SSH probe failed: {result.stderr.strip()}[/yellow]")
+        return False
+
+    console.print(f"[yellow]SSH not ready after {max_wait}s. Capsule apply may fail.[/yellow]")
+    return False
+
+
 def apply_capsule_live(name: str, capsule_name: str) -> None:
     validate_name(name)
     recipe = read_instance_recipe(name)
@@ -1343,6 +1384,9 @@ def apply_capsule_live(name: str, capsule_name: str) -> None:
     if not key:
         console.print("[yellow]No SSH private key found. Cannot apply capsule remotely.[/yellow]")
         return
+
+    # Wait for SSH key auth to be ready (cloud-init race condition)
+    _wait_for_ssh_ready(ip, user, key, ssh_port)
 
     script = "\n".join(cmds)
     ssh_cmd = [
