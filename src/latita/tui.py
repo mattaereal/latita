@@ -39,6 +39,7 @@ from .config import (
     write_yaml,
 )
 from .operations import (
+    _detect_video_models,
     apply_capsule_live,
     bootstrap_host,
     connect_instance,
@@ -119,7 +120,7 @@ class ConfirmScreen(Screen):
 # ---------------------------------------------------------------------------
 
 class FormScreen(Screen[dict[str, Any] | None]):
-    """Base modal form with profile, name, network, error, buttons."""
+    """Base modal form with profile, name, network, video model, error, buttons."""
 
     BINDINGS = [
         Binding("escape", "dismiss", "Cancel", show=False),
@@ -129,6 +130,32 @@ class FormScreen(Screen[dict[str, Any] | None]):
         super().__init__()
         self._title = title
         self._box_id = box_id
+        self._video_options = self._load_video_options()
+
+    @staticmethod
+    def _load_video_options() -> tuple[list[tuple[str, str]], str]:
+        """Probe QEMU and return (Select options, default value)."""
+        try:
+            models = _detect_video_models()
+        except Exception:
+            return ([("Auto-detect", "")], "")
+        available = models["available"]
+        best = models["best"]
+        labels = {
+            "qxl": "qxl   (best SPICE)",
+            "virtio": "virtio (good perf)",
+            "vga": "vga    (universal)",
+        }
+        opts = []
+        default = ""
+        for model in ("qxl", "virtio", "vga"):
+            if available.get(model):
+                opts.append((labels[model], model))
+                if model == best:
+                    default = model
+        if not opts:
+            opts = [("Auto-detect", "")]
+        return (opts, default)
 
     def compose(self) -> ComposeResult:
         with Vertical(id=self._box_id, classes="form-box"):
@@ -152,6 +179,27 @@ class FormScreen(Screen[dict[str, Any] | None]):
             value="nat",
             id="network_mode",
         )
+        video_opts, video_default = self._video_options
+        yield Select(video_opts, value=video_default or None, id="video_model")
+        yield Static("Video model (desktop VMs only)", id="video-hint", classes="form-hint")
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "profile":
+            self._toggle_video_visibility(str(event.value) if event.value else "headless")
+
+    def _toggle_video_visibility(self, profile: str) -> None:
+        video = self.query_one("#video_model", Select)
+        hint = self.query_one("#video-hint", Static)
+        if profile == "desktop":
+            video.styles.display = "block"
+            hint.styles.display = "block"
+        else:
+            video.styles.display = "none"
+            hint.styles.display = "none"
+
+    def on_mount(self) -> None:
+        profile_widget = self.query_one("#profile", Select)
+        self._toggle_video_visibility(str(profile_widget.value) if profile_widget.value else "headless")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-create":
@@ -180,7 +228,7 @@ class FormScreen(Screen[dict[str, Any] | None]):
 
     def _build_result(self, name: str, profile: str, net_mode: str) -> dict[str, Any]:
         """Child classes override to add extra fields."""
-        return {
+        recipe: dict[str, Any] = {
             "profile": profile,
             "template_name": profile,
             "name": name,
@@ -189,6 +237,12 @@ class FormScreen(Screen[dict[str, Any] | None]):
                 "nat_network": "default" if net_mode == "nat" else "",
             },
         }
+        if profile == "desktop":
+            video_widget = self.query_one("#video_model", Select)
+            video = str(video_widget.value) if video_widget.value else ""
+            if video:
+                recipe["video_model"] = video
+        return recipe
 
     def action_dismiss(self) -> None:
         self.dismiss(None)
@@ -201,30 +255,12 @@ class CreateVMScreen(FormScreen):
         super().__init__("Create VM", "create-box")
 
     def _compose_fields(self) -> ComposeResult:
-        yield Select(
-            [("headless", "headless"), ("desktop", "desktop")],
-            value="headless",
-            id="profile",
-        )
-        yield Input(placeholder="VM name", id="name")
-        yield Select(
-            [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated"), ("None (no network device)", "none")],
-            value="nat",
-            id="network_mode",
-        )
+        yield from super()._compose_fields()
         yield Checkbox("Transient (auto-remove on shutdown)", value=False, id="transient")
         yield Checkbox("Destroy on stop", value=False, id="destroy_on_stop")
 
     def _build_result(self, name: str, profile: str, net_mode: str) -> dict[str, Any]:
-        recipe: dict[str, Any] = {
-            "profile": profile,
-            "template_name": profile,
-            "name": name,
-            "network": {
-                "mode": net_mode,
-                "nat_network": "default" if net_mode == "nat" else "",
-            },
-        }
+        recipe = super()._build_result(name, profile, net_mode)
         transient = self.query_one("#transient", Checkbox).value
         destroy = self.query_one("#destroy_on_stop", Checkbox).value
         if transient:
@@ -255,17 +291,14 @@ class RunVMScreen(FormScreen):
         yield Input(placeholder="Command to run inside VM (optional, e.g. uname -a)", id="command")
         yield Static("This VM is transient and will be destroyed on shutdown.", id="run-warn", classes="form-warn")
 
+    def _compose_fields(self) -> ComposeResult:
+        yield from super()._compose_fields()
+        yield Input(placeholder="Command to run inside VM (optional, e.g. uname -a)", id="command")
+        yield Static("This VM is transient and will be destroyed on shutdown.", id="run-warn", classes="form-warn")
+
     def _build_result(self, name: str, profile: str, net_mode: str) -> dict[str, Any]:
+        recipe = super()._build_result(name, profile, net_mode)
         command = self.query_one("#command", Input).value.strip()
-        recipe: dict[str, Any] = {
-            "profile": profile,
-            "template_name": profile,
-            "name": name,
-            "network": {
-                "mode": net_mode,
-                "nat_network": "default" if net_mode == "nat" else "",
-            },
-        }
         if command:
             recipe["command"] = command
         return {"mode": "run", "recipe": recipe}

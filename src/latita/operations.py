@@ -141,26 +141,21 @@ def _find_free_port(start: int = 2222, end: int = 9999) -> int:
     raise RuntimeError(f"No free TCP port found in range {start}-{end}")
 
 
-_VIDEO_MODEL_CACHE: str | None = None
+_VIDEO_MODEL_CACHE: dict[str, Any] | None = None
 
 
-def _detect_video_model() -> str:
-    """Detect the best available QEMU video model for desktop VMs.
+def _detect_video_models() -> dict[str, Any]:
+    """Probe QEMU and return ranked video models for desktop VMs.
 
-    QEMU may be compiled without qxl or virtio-gpu-pci, so we probe
-    ``qemu-system-x86_64 -device help`` and pick the best available:
-    qxl > virtio > vga.
-
-    Result is cached for the process lifetime.
+    Returns a dict with ``best`` (str) and ``available`` (dict[str, bool]).
+    Preference order: qxl > virtio > vga.
     """
     global _VIDEO_MODEL_CACHE
     if _VIDEO_MODEL_CACHE is not None:
         return _VIDEO_MODEL_CACHE
 
     cfg = get_config()
-    qemu_bin = cfg.qemu_binary
-    if not qemu_bin:
-        qemu_bin = "qemu-system-x86_64"
+    qemu_bin = cfg.qemu_binary or "qemu-system-x86_64"
 
     devices: set[str] = set()
     try:
@@ -174,25 +169,52 @@ def _detect_video_model() -> str:
     except Exception:
         pass
 
-    # Map QEMU device names to virt-install --video values.
     # Note: virt-install --video virtio maps to virtio-gpu-pci (PCI model).
-    # virtio-gpu-device exists on some builds but sits on virtio-bus, not PCI,
-    # so --video virtio still fails. Only virtio-gpu-pci counts as "virtio".
-    has_qxl = any(d in devices for d in ("qxl", "qxl-vga", "qxl-pci"))
-    has_virtio = "virtio-gpu-pci" in devices
-    has_vga = any(d in devices for d in ("VGA", "cirrus-vga", "vmware-svga"))
+    # virtio-gpu-device (virtio-bus) does NOT work with --video virtio.
+    available: dict[str, bool] = {
+        "qxl": any(d in devices for d in ("qxl", "qxl-vga", "qxl-pci")),
+        "virtio": "virtio-gpu-pci" in devices,
+        "vga": any(d in devices for d in ("VGA", "cirrus-vga", "vmware-svga")),
+    }
 
-    if has_qxl:
-        model = "qxl"
-    elif has_virtio:
-        model = "virtio"
-    elif has_vga:
-        model = "vga"
+    for model in ("qxl", "virtio", "vga"):
+        if available[model]:
+            best = model
+            break
     else:
-        model = "vga"  # universal fallback; virt-install will let QEMU pick
+        best = "vga"  # universal fallback
 
-    _VIDEO_MODEL_CACHE = model
-    return model
+    result = {"best": best, "available": available}
+    _VIDEO_MODEL_CACHE = result
+    return result
+
+
+def _detect_video_model() -> str:
+    """Convenience: return the best detected video model string."""
+    return _detect_video_models()["best"]
+
+
+def _pick_video_model_cli(available: dict[str, bool], default: str) -> str:
+    """Ranked CLI prompt for picking a video model.
+
+    Prints available models with the default starred, then reads input.
+    """
+    labels = {
+        "qxl": "qxl   — best SPICE performance",
+        "virtio": "virtio — good performance",
+        "vga": "vga    — universal fallback",
+    }
+    print("\nDetected video models (ranked):")
+    for model in ("qxl", "virtio", "vga"):
+        if not available.get(model):
+            continue
+        marker = " [default]" if model == default else ""
+        print(f"  {labels[model]}{marker}")
+    print(f"\nDefault: {default}")
+    choice = input("Video model (Enter for default): ").strip().lower()
+    if choice in available and available[choice]:
+        return choice
+    return default
 
 
 def _build_nocloud_iso(
@@ -700,12 +722,15 @@ def _run_create(
         args.append("--transient")
 
     if recipe["profile"] == "desktop":
-        video_model = _detect_video_model()
+        video_model = recipe.get("video_model")
+        if not video_model:
+            video_model = _detect_video_model()
         args.extend(["--graphics", "spice,listen=127.0.0.1", "--video", video_model])
         if not cfg.is_session:
             args.extend(["--channel", "spicevmc"])
     else:
         args.extend(["--graphics", "none"])
+        video_model = ""
 
     # Networking
     ssh_port = None
@@ -730,7 +755,25 @@ def _run_create(
     profile = SecurityProfile.from_dict(sec)
     args = apply_hardening_to_args(profile, args, vm_name=recipe["name"])
 
-    virt_install(args)
+    # Try virt-install; on video-model failure offer a ranked picker and retry.
+    try:
+        virt_install(args)
+    except Exception as exc:
+        err_msg = str(exc)
+        if recipe["profile"] == "desktop" and "is not a valid device model name" in err_msg:
+            console.print(f"\n[red]Video model '{video_model}' failed:[/red] {err_msg}")
+            models = _detect_video_models()
+            picked = _pick_video_model_cli(models["available"], models["best"])
+            # Replace the --video argument
+            for i, arg in enumerate(args):
+                if arg == "--video":
+                    args[i + 1] = picked
+                    break
+            video_model = picked
+            console.print(f"[green]Retrying with --video {picked}...[/green]\n")
+            virt_install(args)
+        else:
+            raise
 
     # Spec & metadata
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -749,6 +792,7 @@ def _run_create(
         "nat_network": nat_network,
         "uplink": uplink,
         "graphics": "spice" if recipe["profile"] == "desktop" else "none",
+        "video_model": video_model,
         "transient": recipe["ephemeral"]["transient"],
         "destroy_on_stop": recipe["ephemeral"]["destroy_on_stop"],
         "max_runs": recipe["ephemeral"]["max_runs"],
@@ -1079,7 +1123,9 @@ def revive_instance(name: str) -> None:
         args.append("--transient")
 
     if spec.get("graphics") == "spice":
-        video_model = _detect_video_model()
+        video_model = spec.get("video_model")
+        if not video_model:
+            video_model = _detect_video_model()
         args.extend(["--graphics", "spice,listen=127.0.0.1", "--video", video_model])
         if not cfg.is_session:
             args.extend(["--channel", "spicevmc"])

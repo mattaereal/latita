@@ -215,6 +215,13 @@ class TestConfirmScreen:
 
 
 class TestCreateVMScreen:
+    @pytest.fixture(autouse=True)
+    def _patch_video(self, monkeypatch):
+        monkeypatch.setattr(
+            "latita.tui.FormScreen._load_video_options",
+            staticmethod(lambda: ([("qxl (best SPICE)", "qxl"), ("vga    (universal)", "vga")], "qxl")),
+        )
+
     def test_compose_has_widgets(self):
         screen = CreateVMScreen()
         async def _test():
@@ -226,6 +233,7 @@ class TestCreateVMScreen:
                 assert screen.query_one("#profile", Select) is not None
                 assert screen.query_one("#name", Input) is not None
                 assert screen.query_one("#network_mode", Select) is not None
+                assert screen.query_one("#video_model", Select) is not None
                 assert screen.query_one("#transient", Checkbox) is not None
                 assert screen.query_one("#destroy_on_stop", Checkbox) is not None
                 assert screen.query_one("#btn-create", Button) is not None
@@ -350,6 +358,13 @@ class TestCreateVMScreen:
 
 
 class TestRunVMScreen:
+    @pytest.fixture(autouse=True)
+    def _patch_video(self, monkeypatch):
+        monkeypatch.setattr(
+            "latita.tui.FormScreen._load_video_options",
+            staticmethod(lambda: ([("qxl (best SPICE)", "qxl"), ("vga    (universal)", "vga")], "qxl")),
+        )
+
     def test_compose_has_widgets(self):
         screen = RunVMScreen()
         async def _test():
@@ -361,6 +376,7 @@ class TestRunVMScreen:
                 assert screen.query_one("#profile", Select) is not None
                 assert screen.query_one("#name", Input) is not None
                 assert screen.query_one("#network_mode", Select) is not None
+                assert screen.query_one("#video_model", Select) is not None
                 assert screen.query_one("#command", Input) is not None
                 assert screen.query_one("#run-warn", Static) is not None
                 assert screen.query_one("#btn-create", Button) is not None
