@@ -159,10 +159,10 @@ def create_lab_key(lab: str = "lab1") -> Path:
     return key
 
 
-def hash_password_interactive() -> str:
+def hash_password_interactive(guest_user: str = "dev") -> str:
     need_cmd("openssl")
     while True:
-        pw1 = getpass.getpass("Password: ")
+        pw1 = getpass.getpass(f"Password for VM user '{guest_user}' (not your host password): ")
         pw2 = getpass.getpass("Repeat password: ")
         if pw1 != pw2:
             print("passwords do not match")
@@ -181,10 +181,14 @@ def read_text(path: Path) -> str:
 def shred_file(path: Path, passes: int = 3) -> None:
     if not path.exists():
         return
-    if shutil.which("shred"):
-        run(["shred", "-n", str(passes), "-u", str(path)], check=False)
-    else:
-        path.unlink()
+    try:
+        if shutil.which("shred"):
+            run(["shred", "-n", str(passes), "-u", str(path)], check=False)
+        else:
+            path.unlink()
+    except PermissionError:
+        # May happen for root-owned files in user dirs (system libvirt)
+        pass
 
 
 def parse_iso_datetime(value: str) -> Any:

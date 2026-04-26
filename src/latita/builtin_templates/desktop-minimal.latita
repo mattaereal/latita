@@ -1,9 +1,9 @@
 profile: desktop
 os_family: fedora
-description: Desktop VM with XFCE and Firefox
+description: Minimal desktop VM with Openbox (lightweight WM)
 base_image: fedora43-base.qcow2
 cpus: 2
-memory: 4096
+memory: 2048
 disk_size: 20G
 guest_user: dev
 passwordless_sudo: true
@@ -14,7 +14,7 @@ ephemeral:
 
 network:
   mode: nat
-  mgmt_ip: 10.31.0.2
+  mgmt_ip: 10.31.0.3
   mgmt_prefix: 24
 
 security:
@@ -24,30 +24,36 @@ security:
 
 provision:
   packages:
-    - firefox
     - openssh-clients
     - openssh-server
     - spice-vdagent
-    - lightdm
-    - lightdm-gtk-greeter
     - xorg-x11-server-Xorg
     - xorg-x11-drv-qxl
     - mesa-dri-drivers
-    - xfce4-session
-    - xfce4-panel
-    - xfdesktop
-    - thunar
+    - openbox
+    - tint2
     - xterm
   write_files:
-    - path: /etc/lightdm/lightdm.conf.d/50-autologin.conf
+    - path: /etc/systemd/system/getty@tty1.service.d/override.conf
       owner: root:root
       permissions: "0644"
       content: |
-        [Seat:*]
-        autologin-user={guest_user}
-        autologin-user-timeout=0
-        user-session=xfce
-        greeter-session=lightdm-gtk-greeter
+        [Service]
+        ExecStart=
+        ExecStart=-/sbin/agetty --autologin {guest_user} --noclear %I $TERM
+    - path: /home/{guest_user}/.bash_profile
+      owner: "{guest_user}:{guest_user}"
+      permissions: "0644"
+      content: |
+        if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+          exec startx
+        fi
+    - path: /home/{guest_user}/.xinitrc
+      owner: "{guest_user}:{guest_user}"
+      permissions: "0644"
+      content: |
+        tint2 &
+        exec openbox-session
     - path: /etc/X11/xorg.conf.d/10-video.conf
       owner: root:root
       permissions: "0644"
@@ -58,7 +64,6 @@ provision:
         EndSection
   root_commands:
     - systemctl enable --now sshd
-    - systemctl enable lightdm
     - systemctl set-default graphical.target
     - systemctl enable spice-vdagentd || true
     - mkdir -p /home/{guest_user}/Downloads /home/{guest_user}/workspace /home/{guest_user}/.ssh

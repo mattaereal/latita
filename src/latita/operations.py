@@ -424,7 +424,12 @@ def bootstrap_host() -> None:
             autostart_network("default")
             console.print("  [green]✓[/green] Created NAT network: default")
         else:
-            console.print("  [green]✓[/green] NAT network: default")
+            if not network_is_active("default"):
+                start_network("default")
+                autostart_network("default")
+                console.print("  [green]✓[/green] Started NAT network: default")
+            else:
+                console.print("  [green]✓[/green] NAT network: default")
     else:
         console.print("  [dim]Session mode: skipped network setup[/dim]")
 
@@ -484,6 +489,33 @@ def _discover_latest_fedora_url(url: str) -> str | None:
     # Sort by version string and pick the latest
     matches.sort(key=lambda s: [int(x) for x in re.findall(r"\d+", s)])
     return dir_url + matches[-1]
+
+
+def _maybe_download_base(base_image_name: str) -> bool:
+    """Check if a base image exists; if not and it's in BASE_IMAGES, prompt to download.
+
+    Returns True if the image is now available, False if the user declined or it's not in catalog.
+    """
+    cfg = get_config()
+    base_img = cfg.base_dir / base_image_name
+    if base_img.exists():
+        return True
+
+    info = None
+    for label, data in BASE_IMAGES.items():
+        if data["filename"] == base_image_name:
+            info = data
+            break
+    if not info:
+        return False
+
+    if typer.confirm(
+        f"Base image '{base_image_name}' not found. Download from catalog?",
+        default=True,
+    ):
+        _download_base(info["filename"], info["url"])
+        return (cfg.base_dir / base_image_name).exists()
+    return False
 
 
 def _download_base(name: str, url: str) -> None:
@@ -660,10 +692,10 @@ def _run_create(
         for c in recipe.get("_resolved_capsules", [])
     ]
 
-    # Desktop needs login hash if not passwordless_sudo
+    # Desktop needs login hash unless it's desktop-minimal (autologin, no password needed)
     login_hash = ""
-    if recipe["profile"] == "desktop":
-        login_hash = hash_password_interactive()
+    if recipe["profile"] == "desktop" and recipe.get("template_name") != "desktop-minimal":
+        login_hash = hash_password_interactive(guest_user=recipe["guest_user"])
 
     pkg_mgr = _package_manager_for_recipe(recipe)
     osinfo = _osinfo_for_recipe(recipe)
@@ -733,6 +765,8 @@ def _run_create(
             args.extend(["--channel", "spicevmc"])
     else:
         args.extend(["--graphics", "none"])
+        # Serial console so virt-viewer can connect even without a display
+        args.extend(["--serial", "pty"])
         video_model = ""
 
     # Networking
@@ -820,6 +854,7 @@ def _run_create(
         "EXPIRE_AT": str(spec["expire_at"] or ""),
         "FORWARDED_SSH_PORT": str(ssh_port) if ssh_port else "",
         "GRAPHICS": spec["graphics"],
+        "LIBVIRT_URI": cfg.libvirt_uri,
     })
 
     console.print(f"\n[green]Created {recipe['name']} from template '{recipe['template_name']}'[/green]")
@@ -882,6 +917,37 @@ def start_instance(name: str) -> None:
     console.print(f"Started {name}", style="green")
 
 
+def pause_instance(name: str) -> None:
+    validate_name(name)
+    if not vm_exists(name):
+        raise typer.BadParameter(f"VM not found in libvirt: {name}")
+    state = get_vm_state(name)
+    if state == "paused":
+        console.print(f"{name} is already paused", style="yellow")
+        return
+    if state != "running":
+        console.print(f"Cannot pause {name}: state is {state}", style="yellow")
+        return
+    from .libvirt import suspend_vm_libvirt
+    suspend_vm_libvirt(name)
+    console.print(f"Paused {name}", style="green")
+
+
+def resume_instance(name: str) -> None:
+    validate_name(name)
+    if not vm_exists(name):
+        raise typer.BadParameter(f"VM not found in libvirt: {name}")
+    state = get_vm_state(name)
+    if state == "running":
+        console.print(f"{name} is already running", style="yellow")
+        return
+    if state != "paused":
+        console.print(f"Cannot resume {name}: state is {state}", style="yellow")
+        return
+    resume_vm_libvirt(name)
+    console.print(f"Resumed {name}", style="green")
+
+
 def stop_instance(name: str) -> None:
     validate_name(name)
     spec = read_instance_spec(name)
@@ -915,10 +981,22 @@ def destroy_instance(name: str) -> None:
     if inst.exists():
         overlay = inst / f"{name}.qcow2"
         shred_file(overlay)
+        remaining: list[Path] = []
         for f in inst.iterdir():
             if f.is_file():
-                shred_file(f)
-        shutil.rmtree(inst)
+                try:
+                    shred_file(f)
+                except PermissionError:
+                    remaining.append(f)
+        try:
+            shutil.rmtree(inst)
+        except PermissionError:
+            remaining.extend(inst.iterdir())
+        if remaining:
+            console.print(
+                f"[yellow]Some files in {inst} could not be deleted (permission denied).[/yellow]\n"
+                f"Run: sudo rm -rf {inst}",
+            )
     console.print(f"Destroyed {name}", style="green")
 
 
@@ -1020,19 +1098,16 @@ def run_instance(
         ]
 
         if recipe["profile"] == "desktop":
-            if cfg.is_session:
-                args.extend([
-                    "--graphics", "spice,listen=127.0.0.1",
-                    "--video", "virtio",
-                ])
-            else:
-                args.extend([
-                    "--graphics", "spice,listen=127.0.0.1",
-                    "--video", "qxl",
-                    "--channel", "spicevmc",
-                ])
+            video_model = _detect_video_model()
+            args.extend([
+                "--graphics", "spice,listen=127.0.0.1",
+                "--video", video_model,
+            ])
+            if not cfg.is_session:
+                args.extend(["--channel", "spicevmc"])
         else:
             args.extend(["--graphics", "none"])
+            args.extend(["--serial", "pty"])
 
         net_mode = net["mode"]
         if net_mode in ("isolated", "none"):
@@ -1135,6 +1210,7 @@ def revive_instance(name: str) -> None:
             args.extend(["--channel", "spicevmc"])
     else:
         args.extend(["--graphics", "none"])
+        args.extend(["--serial", "pty"])
 
     ssh_port = None
     if net_mode in ("isolated", "none"):
@@ -1269,11 +1345,24 @@ def ssh_instance(name: str, command: str | None = None) -> None:
 
 def connect_instance(name: str) -> None:
     validate_name(name)
-    spec = read_instance_spec(name)
-    if spec and spec.get("graphics") == "spice":
-        subprocess.run(["virt-viewer", "--connect", get_config().libvirt_uri, "--wait", name])
-    else:
+    env = read_instance_env(name)
+    uri = env.get("LIBVIRT_URI") or get_config().libvirt_uri
+
+    if not shutil.which("virt-viewer"):
+        console.print("[yellow]virt-viewer is not installed[/yellow]")
         ssh_instance(name)
+        return
+
+    # Verify domain exists at this URI
+    check = subprocess.run(
+        ["virsh", "-c", uri, "domstate", name],
+        capture_output=True, text=True, timeout=5,
+    )
+    if check.returncode != 0:
+        console.print(f"[red]Cannot find '{name}' at {uri}.[/red]")
+        return
+
+    subprocess.run(["virt-viewer", "--connect", uri, "--wait", name])
 
 
 
@@ -1447,11 +1536,14 @@ def _stream_ssh(cmd: list[str]) -> bool:
 def scan_instances() -> list[dict[str, Any]]:
     cfg = get_config()
     cfg.ensure_dirs()
-    names = {d.name for d in cfg.inst_dir.iterdir() if d.is_dir()} if cfg.inst_dir.exists() else set()
+    inst_names = {d.name for d in cfg.inst_dir.iterdir() if d.is_dir()} if cfg.inst_dir.exists() else set()
+    # Only show VMs that have a latita instance directory — hide external VMs
+    names = set(inst_names)
     try:
         cp = run(["virsh", "-c", cfg.libvirt_uri, "list", "--all", "--name"], capture=True, check=False)
         if cp.returncode == 0:
-            names |= {line.strip() for line in cp.stdout.splitlines() if line.strip()}
+            virsh_names = {line.strip() for line in cp.stdout.splitlines() if line.strip()}
+            names |= (virsh_names & inst_names)
     except Exception:
         pass
 
@@ -1574,6 +1666,11 @@ def doctor() -> None:
     except subprocess.CalledProcessError:
         console.print('  gi (PyGObject): [red]MISSING[/red]')
         issues.append('gi')
+
+    if shutil.which('virt-viewer'):
+        console.print('  virt-viewer: [green]ok[/green]')
+    else:
+        console.print('  virt-viewer: [yellow]not installed (recommended for desktop VMs)[/yellow]')
 
     uid = os.getuid()
     socket_path = f'/run/user/{uid}/libvirt/virtqemud-sock'

@@ -52,9 +52,18 @@ def ensure_network_exists(name: str) -> None:
 
 def ensure_network_active(name: str) -> None:
     ensure_network_exists(name)
-    cp = virsh("net-list", "--name", capture=True)
-    if name not in cp.stdout.splitlines():
-        raise typer.BadParameter(f"libvirt network '{name}' is not active")
+    if network_is_active(name):
+        return
+    # Attempt to start before failing
+    try:
+        start_network(name)
+        return
+    except Exception:
+        pass
+    raise typer.BadParameter(
+        f"libvirt network '{name}' is not active. "
+        f"Run: sudo virsh net-start {name}"
+    )
 
 
 def detect_default_uplink() -> Optional[str]:
@@ -246,6 +255,10 @@ def stop_vm_libvirt(name: str) -> None:
 
 def resume_vm_libvirt(name: str) -> None:
     virsh("resume", name)
+
+
+def suspend_vm_libvirt(name: str) -> None:
+    virsh("suspend", name)
 
 
 def undefine_vm_libvirt(name: str) -> None:

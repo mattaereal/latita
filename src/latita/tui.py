@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import warnings
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -29,6 +30,7 @@ from rich.console import Console
 from rich.pretty import Pretty
 
 from .config import (
+    BASE_IMAGES,
     get_capsule_path,
     get_config,
     get_template_path,
@@ -40,12 +42,15 @@ from .config import (
 )
 from .operations import (
     _detect_video_models,
+    _maybe_download_base,
     apply_capsule_live,
     bootstrap_host,
     connect_instance,
     create_instance,
     destroy_instance,
     doctor,
+    pause_instance,
+    resume_instance,
     run_instance,
     scan_instances,
     ssh_instance,
@@ -93,6 +98,8 @@ class ConfirmScreen(Screen):
         Binding("y", "yes", "Yes", show=False),
         Binding("n", "no", "No", show=False),
         Binding("escape", "no", "No", show=False),
+        Binding("left", "focus_prev_button", "Prev", show=False),
+        Binding("right", "focus_next_button", "Next", show=False),
     ]
 
     def __init__(self, message: str, on_result: Callable[[bool], None]) -> None:
@@ -116,6 +123,17 @@ class ConfirmScreen(Screen):
         elif event.button.id == "btn-no":
             self.action_no()
 
+    def action_focus_next_button(self) -> None:
+        no_btn = self.query_one("#btn-no", Button)
+        yes_btn = self.query_one("#btn-yes", Button)
+        if self.focused is no_btn:
+            yes_btn.focus()
+        elif self.focused is yes_btn:
+            no_btn.focus()
+
+    def action_focus_prev_button(self) -> None:
+        self.action_focus_next_button()
+
     def action_yes(self) -> None:
         self.app.pop_screen()
         self.on_result(True)
@@ -123,6 +141,55 @@ class ConfirmScreen(Screen):
     def action_no(self) -> None:
         self.app.pop_screen()
         self.on_result(False)
+
+
+class PromptScreen(Screen):
+    """Native TUI prompt for a single-line text value. Stays inside the TUI."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Cancel", show=False),
+    ]
+
+    def __init__(self, label: str, placeholder: str, on_result: Callable[[str | None], None]) -> None:
+        super().__init__()
+        self.label = label
+        self.placeholder = placeholder
+        self.on_result = on_result
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="prompt-box", classes="form-box"):
+            yield Static(self.label, id="prompt-label", classes="form-title")
+            yield Input(placeholder=self.placeholder, id="prompt-input")
+            yield Static("", id="prompt-error", classes="form-error")
+            with Horizontal(id="prompt-buttons", classes="form-buttons"):
+                yield Button("OK", id="btn-ok", variant="primary")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#prompt-input", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-ok":
+            self._submit()
+        elif event.button.id == "btn-cancel":
+            self.action_dismiss()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "prompt-input":
+            self._submit()
+
+    def _submit(self) -> None:
+        value = self.query_one("#prompt-input", Input).value.strip()
+        if not value:
+            self.query_one("#prompt-error", Static).update("Value is required")
+            self.query_one("#prompt-input", Input).focus()
+            return
+        self.app.pop_screen()
+        self.on_result(value)
+
+    def action_dismiss(self) -> None:
+        self.app.pop_screen()
+        self.on_result(None)
 
 
 class TypeToConfirmScreen(Screen):
@@ -174,6 +241,8 @@ class FormScreen(Screen[dict[str, Any] | None]):
 
     BINDINGS = [
         Binding("escape", "dismiss", "Cancel", show=False),
+        Binding("left", "focus_prev_button", "Prev", show=False),
+        Binding("right", "focus_next_button", "Next", show=False),
     ]
 
     _name_counters: dict[str, int] = {}
@@ -183,7 +252,8 @@ class FormScreen(Screen[dict[str, Any] | None]):
         self._title = title
         self._box_id = box_id
         self._video_options = self._load_video_options()
-        self._last_profile = "headless"
+        self._templates = list_latita_templates()
+        self._last_template = "headless"
 
     @staticmethod
     def _load_video_options() -> tuple[list[tuple[str, str]], str]:
@@ -210,28 +280,30 @@ class FormScreen(Screen[dict[str, Any] | None]):
             opts = [("Auto-detect", "")]
         return (opts, default)
 
-    def _suggest_name(self, profile: str) -> str:
-        """Return the next sequential name for a profile."""
-        self._name_counters[profile] = self._name_counters.get(profile, 0) + 1
-        return f"{profile}-{self._name_counters[profile]}"
+    def _suggest_name(self, template: str) -> str:
+        """Return the next sequential name for a template."""
+        self._name_counters[template] = self._name_counters.get(template, 0) + 1
+        return f"{template}-{self._name_counters[template]}"
 
-    def _update_name_on_profile_change(self, new_profile: str) -> None:
+    def _update_name_on_template_change(self, new_template: str) -> None:
         """Smart name update: keep custom names, replace auto-generated ones."""
         name_widget = self.query_one("#name", Input)
         current = name_widget.value.strip()
         if not current:
-            # Empty: suggest new name
-            name_widget.value = self._suggest_name(new_profile)
-        elif self._is_auto_generated_name(current, self._last_profile):
-            # Matches old auto pattern: replace with new
-            name_widget.value = self._suggest_name(new_profile)
+            name_widget.value = self._suggest_name(new_template)
+        elif self._is_auto_generated_name(current, self._last_template):
+            name_widget.value = self._suggest_name(new_template)
         # else: custom name — leave it alone
-        name_widget.focus()
 
     @staticmethod
-    def _is_auto_generated_name(name: str, profile: str) -> bool:
+    def _is_auto_generated_name(name: str, template: str) -> bool:
         import re
-        return bool(re.fullmatch(rf"{re.escape(profile)}-\d+", name))
+        return bool(re.fullmatch(rf"{re.escape(template)}-\d+", name))
+
+    def _template_profile(self, template_name: str) -> str:
+        """Return the profile (headless/desktop) for a template name."""
+        data = self._templates.get(template_name, {})
+        return str(data.get("profile", "headless")).lower()
 
     def compose(self) -> ComposeResult:
         with Vertical(id=self._box_id, classes="form-box"):
@@ -244,12 +316,14 @@ class FormScreen(Screen[dict[str, Any] | None]):
 
     def _compose_fields(self) -> ComposeResult:
         """Child classes override to yield extra widgets."""
+        template_names = sorted(self._templates.keys())
+        if not template_names:
+            template_names = ["headless"]
+        template_options = [(n, n) for n in template_names]
+        default_template = template_options[0][1] if template_options else "headless"
+
         yield Input(placeholder="VM name", id="name")
-        yield Select(
-            [("headless", "headless"), ("desktop", "desktop")],
-            value="headless",
-            id="profile",
-        )
+        yield Select(template_options, value=default_template, id="profile")
         yield Select(
             [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated"), ("None (no network device)", "none")],
             value="nat",
@@ -261,34 +335,28 @@ class FormScreen(Screen[dict[str, Any] | None]):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "profile":
-            new_profile = str(event.value) if event.value else "headless"
-            self._toggle_video_visibility(new_profile)
-            self._update_name_on_profile_change(new_profile)
-            self._last_profile = new_profile
-        elif event.select.id == "network_mode":
-            self._focus_next_after("#network_mode")
-        elif event.select.id == "video_model":
-            self._focus_next_after("#video_model")
+            new_template = str(event.value) if event.value else "headless"
+            self._toggle_video_visibility(new_template)
+            self._update_name_on_template_change(new_template)
+            self._last_template = new_template
 
-    def _focus_next_after(self, widget_id: str) -> None:
-        """Focus the next focusable widget after the given one."""
-        order = ["#name", "#profile", "#network_mode", "#video_model", "#transient", "#destroy_on_stop", "#command", "#btn-create", "#btn-cancel"]
-        try:
-            idx = order.index(widget_id)
-        except ValueError:
-            return
-        for next_id in order[idx + 1:]:
-            try:
-                widget = self.query_one(next_id)
-                if hasattr(widget, "focus") and widget.display:
-                    widget.focus()
-                    break
-            except Exception:
-                continue
+    def action_focus_next_button(self) -> None:
+        """Toggle focus between Create and Cancel buttons."""
+        create_btn = self.query_one("#btn-create", Button)
+        cancel_btn = self.query_one("#btn-cancel", Button)
+        if self.focused is create_btn:
+            cancel_btn.focus()
+        elif self.focused is cancel_btn:
+            create_btn.focus()
 
-    def _toggle_video_visibility(self, profile: str) -> None:
+    def action_focus_prev_button(self) -> None:
+        """Toggle focus between Create and Cancel buttons."""
+        self.action_focus_next_button()
+
+    def _toggle_video_visibility(self, template_name: str) -> None:
         video = self.query_one("#video_model", Select)
         hint = self.query_one("#video-hint", Static)
+        profile = self._template_profile(template_name)
         if profile == "desktop":
             video.styles.display = "block"
             hint.styles.display = "block"
@@ -300,7 +368,8 @@ class FormScreen(Screen[dict[str, Any] | None]):
         name_widget = self.query_one("#name", Input)
         name_widget.focus()
         profile_widget = self.query_one("#profile", Select)
-        self._toggle_video_visibility(str(profile_widget.value) if profile_widget.value else "headless")
+        current_template = str(profile_widget.value) if profile_widget.value else "headless"
+        self._toggle_video_visibility(current_template)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-create":
@@ -315,23 +384,22 @@ class FormScreen(Screen[dict[str, Any] | None]):
         error_widget = self.query_one("#form-error", Static)
 
         name = name_widget.value.strip()
-        profile = profile_widget.value
+        template_name = str(profile_widget.value) if profile_widget.value else "headless"
         net_mode = str(net_widget.value) if net_widget.value else "nat"
 
         if not name:
             error_widget.update("Name is required")
             name_widget.focus()
             return
-        if profile is None:
-            profile = "headless"
-        result = self._build_result(name, profile, net_mode)
+        result = self._build_result(name, template_name, net_mode)
         self.dismiss(result)
 
-    def _build_result(self, name: str, profile: str, net_mode: str) -> dict[str, Any]:
+    def _build_result(self, name: str, template_name: str, net_mode: str) -> dict[str, Any]:
         """Child classes override to add extra fields."""
+        profile = self._template_profile(template_name)
         recipe: dict[str, Any] = {
             "profile": profile,
-            "template_name": profile,
+            "template_name": template_name,
             "name": name,
             "network": {
                 "mode": net_mode,
@@ -578,6 +646,9 @@ class BrowserScreen(Screen):
     def _copy_builtin(self, name: str, dst: Path) -> None:
         raise NotImplementedError
 
+    def _user_dir(self) -> Path:
+        raise NotImplementedError
+
     # --- Compose & lifecycle ---
 
     def compose(self) -> ComposeResult:
@@ -714,22 +785,20 @@ class BrowserScreen(Screen):
         else:
             old_path = self._get_path(name)
 
-        def _do() -> str | None:
-            new_name = input("New name (empty = cancel): ").strip()
+        def _on_rename(new_name: str | None) -> None:
             if not new_name or new_name == name:
-                print("Rename canceled.")
-                return None
+                return
             new_path = old_path.parent / f"{new_name}{ext}"
             if new_path.exists():
-                print(f"'{new_name}' already exists")
-                return None
+                app.notify(f"'{new_name}' already exists", severity="warning")
+                return
             old_path.rename(new_path)
-            return new_name
-
-        result = app._run_command(_do, f"Rename {name}")
-        if result:
             self._refresh_items()
-            app.notify(f"Renamed to '{result}'")
+            app.notify(f"Renamed to '{new_name}'")
+
+        self.app.push_screen(
+            PromptScreen(f"Rename '{name}'", "new name", _on_rename)
+        )
 
     def action_duplicate(self) -> None:
         name = self._selected_name()
@@ -755,25 +824,31 @@ class BrowserScreen(Screen):
             return
         ext = self._file_ext()
         schema = self._new_schema()
+        parent = self._user_dir()
+        parent.mkdir(parents=True, exist_ok=True)
 
-        def _do() -> str | None:
-            n = input("Name: ").strip()
-            if not n:
-                return None
-            desc = input("Description: ").strip() or "My custom item"
-            path = get_config().templates_dir / f"{n}{ext}"
-            if path.exists():
-                print(f"'{n}' already exists")
-                return None
-            schema["description"] = desc
-            write_yaml(path, schema)
+        # Generate a unique default name (e.g. untitled-1, untitled-2)
+        def _unique_name() -> str:
+            for i in range(1, 10000):
+                candidate = f"untitled-{i}"
+                if not (parent / f"{candidate}{ext}").exists():
+                    return candidate
+            import uuid
+            return f"untitled-{uuid.uuid4().hex[:8]}"
+
+        name = _unique_name()
+        path = parent / f"{name}{ext}"
+        schema.setdefault("description", "My custom item")
+        write_yaml(path, schema)
+
+        def _do() -> None:
             _open_editor(path)
-            return n
+            print(f"\nSaved: {path}")
+            print("Rename with 'r' if you want a different name.")
 
-        result = app._run_command(_do, "New item")
-        if result:
-            self._refresh_items()
-            app.notify(f"Created '{result}'")
+        app._run_command(_do, f"New {name}")
+        self._refresh_items()
+        app.notify(f"Created '{name}' — press 'r' to rename")
 
 
 class TemplatesScreen(BrowserScreen):
@@ -847,6 +922,9 @@ class TemplatesScreen(BrowserScreen):
     def _copy_builtin(self, name: str, dst: Path) -> None:
         shutil.copy2(get_template_path(name), dst)
 
+    def _user_dir(self) -> Path:
+        return get_config().templates_dir
+
 
 class CapsulesScreen(BrowserScreen):
     """Full-screen capsule browser."""
@@ -889,6 +967,9 @@ class CapsulesScreen(BrowserScreen):
     def _copy_builtin(self, name: str, dst: Path) -> None:
         shutil.copy2(get_capsule_path(name), dst)
 
+    def _user_dir(self) -> Path:
+        return get_config().capsules_dir
+
 
 # ---------------------------------------------------------------------------
 # Dashboard (main screen)
@@ -910,6 +991,8 @@ class Dashboard(App):
         Binding("p", "capsules", "Capsules", show=True),
         Binding("s", "start", "Start VM", show=False),
         Binding("S", "stop", "Stop VM", show=False),
+        Binding("P", "pause", "Pause VM", show=False),
+        Binding("M", "resume", "Resume VM", show=False),
         Binding("D", "destroy", "Destroy VM", show=False),
         Binding("h", "ssh", "SSH", show=False),
         Binding("k", "connect", "Connect", show=False),
@@ -934,7 +1017,7 @@ class Dashboard(App):
                 yield Static("Actions", id="right-title")
                 yield ListView(id="action-list")
         yield Static(
-            "c:Create  r:Run  s:Start  S:Stop  D:Destroy  h:SSH  a:Apply  t:Templates  p:Capsules  R:Refresh  q:Quit",
+            "c:Create  r:Run  s:Start  S:Stop  P:Pause  M:Resume  D:Destroy  h:SSH  k:Connect  a:Apply  t:Templates  p:Capsules  R:Refresh  q:Quit",
             id="hint-pane",
         )
         yield Static("", id="statusbar")
@@ -951,6 +1034,8 @@ class Dashboard(App):
         specs = [
             ("start", "Start VM", False),
             ("stop", "Stop VM", False),
+            ("pause", "Pause VM", False),
+            ("resume", "Resume VM", False),
             ("destroy", "Destroy VM", False),
             ("ssh", "SSH", False),
             ("connect", "Connect", False),
@@ -988,12 +1073,14 @@ class Dashboard(App):
             "doctor": True,
             "templates": True,
             "capsules": True,
-            "start": bool(vm and status != "running"),
+            "start": bool(vm and status not in ("running", "paused")),
             "stop": bool(vm and status == "running"),
+            "pause": bool(vm and status == "running"),
+            "resume": bool(vm and status == "paused"),
             "destroy": bool(vm),
-            "ssh": bool(vm),
-            "connect": bool(vm),
-            "apply_capsule": bool(vm),
+            "ssh": bool(vm and status == "running"),
+            "connect": bool(vm and status == "running"),
+            "apply_capsule": bool(vm and status == "running"),
             "info": bool(vm),
             "quit": True,
         }
@@ -1154,8 +1241,12 @@ class Dashboard(App):
 
     # --- Unified runner ------------------------------------------------------
 
-    def _run_command(self, fn: Callable[[], Any], label: str) -> Any:
-        """Suspend TUI, run fn in the real terminal, then prompt to return."""
+    def _run_command(self, fn: Callable[[], Any], label: str) -> dict[str, Any]:
+        """Suspend TUI, run fn in the real terminal, then prompt to return.
+
+        Returns a dict with ``ok`` (bool) and ``error`` (str or None).
+        """
+        error_msg: str | None = None
         with self.suspend():
             from latita import ui as _ui
             from latita import operations as _ops
@@ -1174,13 +1265,13 @@ class Dashboard(App):
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", RuntimeWarning)
                     try:
-                        result = fn()
+                        fn()
                     except KeyboardInterrupt:
                         print("\nCanceled.")
-                        result = None
+                        error_msg = "Canceled"
                     except Exception as exc:
                         print(f"\nError: {exc}")
-                        result = None
+                        error_msg = str(exc)
                 print(f"\n[latita] {label} — Press Enter to return to menu...")
                 try:
                     input()
@@ -1190,36 +1281,91 @@ class Dashboard(App):
                 for mod in _modules:
                     if _old[mod] is not None:
                         mod.console = _old[mod]
-            return result
+
+        if error_msg:
+            self.notify(f"{label} failed: {error_msg}", severity="error")
+        else:
+            self.notify(f"{label} completed", severity="information")
+        return {"ok": error_msg is None, "error": error_msg}
 
     # --- Screen result callbacks ---------------------------------------------
+
+    def _check_base_image(self, base_image: str) -> bool:
+        """Return True if base image exists or was just downloaded."""
+        cfg = get_config()
+        base_img = cfg.base_dir / base_image
+        if base_img.exists():
+            return True
+        # Is it in the catalog?
+        in_catalog = any(v["filename"] == base_image for v in BASE_IMAGES.values())
+        if not in_catalog:
+            self.notify(f"Base image '{base_image}' not found and not in catalog", severity="error")
+            return False
+        return False  # Caller should prompt
+
+    def _download_and_create(self, result: dict[str, Any]) -> None:
+        """Download base image if needed, then create/run."""
+        recipe = result["recipe"]
+        template_name = recipe.get("template_name", recipe.get("profile", "headless"))
+        base_image = recipe.get("base_image", get_config().default_base_name)
+        mode = result.get("mode", "create")
+        command = recipe.get("command")
+
+        def _do() -> None:
+            # Download if missing
+            ok = _maybe_download_base(base_image)
+            if not ok:
+                print(f"Base image '{base_image}' not available. Aborting.")
+                return
+            if mode == "create":
+                create_instance(template_name, name=recipe.get("name"), overrides=recipe)
+            else:
+                run_instance(
+                    template_name,
+                    command=command.split() if command else None,
+                    overrides=recipe,
+                )
+
+        self._run_command(_do, f"{'Create' if mode == 'create' else 'Run'} VM")
+        self._trigger_refresh()
 
     def _on_create_done(self, result: dict[str, Any] | None) -> None:
         if result is None:
             return
         recipe = result["recipe"]
-        template_name = recipe.get("template_name", recipe.get("profile", "headless"))
-        self._run_command(
-            lambda: create_instance(template_name, name=recipe.get("name"), overrides=recipe),
-            "Create VM",
+        base_image = recipe.get("base_image", get_config().default_base_name)
+        if self._check_base_image(base_image):
+            self._download_and_create(result)
+            return
+        # Prompt to download
+        def _on_confirm(confirmed: bool) -> None:
+            if confirmed:
+                self._download_and_create(result)
+        self.push_screen(
+            ConfirmScreen(
+                f"Base image '{base_image}' not found. Download from catalog?",
+                _on_confirm,
+            )
         )
-        self._trigger_refresh()
 
     def _on_run_done(self, result: dict[str, Any] | None) -> None:
         if result is None:
             return
         recipe = result["recipe"]
-        template_name = recipe.get("template_name", recipe.get("profile", "headless"))
-        command = recipe.get("command")
-        self._run_command(
-            lambda: run_instance(
-                template_name,
-                command=command.split() if command else None,
-                overrides=recipe,
-            ),
-            "Run one-shot VM",
+        base_image = recipe.get("base_image", get_config().default_base_name)
+        if self._check_base_image(base_image):
+            self._download_and_create(result)
+            return
+        # Prompt to download
+        def _on_confirm(confirmed: bool) -> None:
+            if confirmed:
+                self._download_and_create(result)
+        self.push_screen(
+            ConfirmScreen(
+                f"Base image '{base_image}' not found. Download from catalog?",
+                _on_confirm,
+            )
         )
-        self._trigger_refresh()
 
     def _on_capsule_chosen(self, capsule_name: str | None) -> None:
         if capsule_name is None:
@@ -1286,6 +1432,22 @@ class Dashboard(App):
         self._run_command(lambda: stop_instance(name), f"Stop {name}")
         self._trigger_refresh()
 
+    def action_pause(self) -> None:
+        name = self._selected_name()
+        if not name:
+            self.notify("Select a VM first", severity="warning")
+            return
+        self._run_command(lambda: pause_instance(name), f"Pause {name}")
+        self._trigger_refresh()
+
+    def action_resume(self) -> None:
+        name = self._selected_name()
+        if not name:
+            self.notify("Select a VM first", severity="warning")
+            return
+        self._run_command(lambda: resume_instance(name), f"Resume {name}")
+        self._trigger_refresh()
+
     def action_destroy(self) -> None:
         name = self._selected_name()
         if not name:
@@ -1314,18 +1476,53 @@ class Dashboard(App):
             return
         _ensure_running(name)
 
-        from .metadata import read_instance_spec
-        spec = read_instance_spec(name)
-        if spec and spec.get("graphics") == "spice":
-            # GUI viewer — launch detached so the TUI stays alive
-            subprocess.Popen(
-                ["virt-viewer", "--connect", get_config().libvirt_uri, "--wait", name],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            self.notify(f"Launched virt-viewer for {name}")
-        else:
+        # Use stored libvirt URI (matches how the VM was created)
+        from .metadata import read_instance_env, read_instance_spec
+        env = read_instance_env(name)
+        uri = env.get("LIBVIRT_URI") or get_config().libvirt_uri
+
+        # Check virt-viewer is installed
+        if not shutil.which("virt-viewer"):
+            self.notify("virt-viewer is not installed", severity="warning")
             self._run_command(lambda: ssh_instance(name), f"Connect {name}")
+            return
+
+        # Verify domain exists at this URI before launching viewer
+        check = subprocess.run(
+            ["virsh", "-c", uri, "domstate", name],
+            capture_output=True, text=True, timeout=5,
+        )
+        if check.returncode != 0:
+            self.notify(f"Cannot find '{name}' at {uri}. Try SSH instead.", severity="error")
+            return
+
+        spec = read_instance_spec(name)
+        mode = "SPICE" if spec and spec.get("graphics") == "spice" else "serial console"
+
+        # Launch virt-viewer and capture stderr to detect immediate failures
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".stderr", delete=False) as tf:
+            stderr_path = tf.name
+        proc = subprocess.Popen(
+            ["virt-viewer", "--connect", uri, "--wait", name],
+            stdout=subprocess.DEVNULL,
+            stderr=open(stderr_path, "w"),
+            start_new_session=True,
+        )
+
+        # Poll briefly; if it exits quickly, something went wrong
+        try:
+            proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            pass  # Still running — good
+        else:
+            stderr_text = Path(stderr_path).read_text().strip()
+            Path(stderr_path).unlink(missing_ok=True)
+            if proc.returncode != 0:
+                self.notify(f"virt-viewer failed: {stderr_text or 'unknown error'}", severity="error")
+                return
+
+        Path(stderr_path).unlink(missing_ok=True)
+        self.notify(f"Launched virt-viewer ({mode}) for {name}")
 
     def action_apply_capsule(self) -> None:
         name = self._selected_name()

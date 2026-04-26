@@ -69,6 +69,26 @@ class TestTemplates:
         assert data["profile"] == "headless"
         assert "provision" in data
 
+    def test_load_desktop_template(self):
+        data = load_latita_template("desktop")
+        assert data["profile"] == "desktop"
+        assert "provision" in data
+        pkgs = data["provision"]["packages"]
+        assert "lightdm-gtk-greeter" in pkgs
+        assert "xorg-x11-drv-qxl" in pkgs
+        assert "xorg-x11-drv-virtio" not in pkgs
+
+    def test_load_desktop_minimal_template(self):
+        data = load_latita_template("desktop-minimal")
+        assert data["profile"] == "desktop"
+        assert "openbox" in data["provision"]["packages"]
+
+    def test_load_desktop_native_template(self):
+        data = load_latita_template("desktop-native")
+        assert data["profile"] == "desktop"
+        assert data["os_family"] == "ubuntu"
+        assert "xserver-xorg-video-qxl" in data["provision"]["packages"]
+
     def test_user_template_override(self, isolated_config):
         cfg = isolated_config
         user_tpl = cfg.templates_dir / "custom.latita"
@@ -81,7 +101,7 @@ class TestCapsules:
     def test_builtin_capsules_exist(self):
         capsules = list_capsules()
         assert "code-server" in capsules
-        assert "podman-host" in capsules
+        assert "ai-agents" in capsules
 
     def test_load_capsule(self):
         cap = load_capsule("code-server")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -7,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from latita.config import Config, get_config, set_config
+from latita.config import Config, get_config, load_latita_template, set_config
 from latita.libvirt import get_vm_ip_addresses, get_vm_state
 from latita.metadata import read_instance_env, read_instance_recipe
 from latita.operations import (
@@ -571,4 +572,99 @@ class TestCapsuleHeavyIntegration:
         assert "v" in cp.stdout
         cp = self._retry_ssh_command(port, key, "dev", "npm --version")
         assert cp.returncode == 0, f"npm --version failed: {cp.stderr}"
+        destroy_instance(name)
+
+
+@pytest.mark.slow
+class TestTemplateProvisioning:
+    """End-to-end tests: create VM from each template and verify ALL provisioned packages are installed."""
+
+    TEMPLATES = [
+        ("headless", "fedora", "rpm -q"),
+        ("desktop", "fedora", "rpm -q"),
+        ("desktop-minimal", "fedora", "rpm -q"),
+        ("desktop-native", "ubuntu", "dpkg-query -W -f='${Package}\\n'"),
+    ]
+
+    def _create_vm_from_template(self, cfg: Config, name: str, template: str):
+        overrides = {
+            "base_image": cfg.default_base_name,
+            "ephemeral": {"transient": False, "destroy_on_stop": False},
+            "memory": 2048,
+            "cpus": 2,
+            "disk_size": "10G",
+            "network": {"mode": "user"},
+            "security": {"no_guest_agent": False},
+        }
+        # desktop-minimal skips password prompt; others need it mocked
+        if template == "desktop-minimal":
+            create_instance(template, name=name, overrides=overrides)
+        else:
+            with patch("latita.operations.hash_password_interactive", return_value="$6$testhash"):
+                create_instance(template, name=name, overrides=overrides)
+
+    def _get_template_packages(self, template_name: str) -> list[str]:
+        from latita.config import load_latita_template
+        data = load_latita_template(template_name)
+        return list(data.get("provision", {}).get("packages", []))
+
+    def _build_verify_command(self, template_name: str, pkg_manager: str, packages: list[str]) -> str:
+        """Build a shell command that verifies all packages are installed.
+
+        Returns a command that fails with a clear error message if any package is missing.
+        """
+        if not packages:
+            return "true"
+
+        pkg_list = " ".join(shlex.quote(p) for p in packages)
+
+        if pkg_manager.startswith("rpm"):
+            # rpm -q exits non-zero and prints missing packages to stderr
+            return f"rpm -q {pkg_list}"
+        elif pkg_manager.startswith("dpkg"):
+            # dpkg-query exits 0 even for missing, so we check individually
+            checks = "\n".join(
+                f"dpkg-query -W -f='${{Status}}' {shlex.quote(p)} | grep -q 'install ok installed' || {{ echo 'Missing: {p}' >&2; exit 1; }}"
+                for p in packages
+            )
+            return f"bash -c '{checks}'"
+        else:
+            return f"{pkg_manager} {pkg_list}"
+
+    @pytest.mark.parametrize("template,os_family,pkg_manager", TEMPLATES)
+    def test_all_template_packages_installed(self, fedora_cfg, template, os_family, pkg_manager):
+        """Create VM from template, verify every package in provision.packages is installed."""
+        cfg = fedora_cfg
+        name = f"test-f43-{template}"
+
+        # desktop-native needs ubuntu base image; skip if not available
+        if template == "desktop-native":
+            ubuntu_img = cfg.base_dir / "ubuntu2404-base.qcow2"
+            if not ubuntu_img.exists():
+                pytest.skip("Ubuntu base image not available")
+            # Override base image for this test
+            overrides = {
+                "base_image": "ubuntu2404-base.qcow2",
+                "ephemeral": {"transient": False, "destroy_on_stop": False},
+                "memory": 2048,
+                "cpus": 2,
+                "disk_size": "10G",
+                "network": {"mode": "user"},
+                "security": {"no_guest_agent": False, "selinux": False},
+            }
+            create_instance(template, name=name, overrides=overrides)
+        else:
+            self._create_vm_from_template(cfg, name, template)
+
+        start_instance(name)
+
+        ip = _wait_for_ssh_ready(name, timeout=300)
+
+        packages = self._get_template_packages(template)
+        assert packages, f"Template '{template}' has no packages to verify"
+
+        verify_cmd = self._build_verify_command(template, pkg_manager, packages)
+        cp = _ssh_run(name, verify_cmd, timeout=60)
+        assert cp.returncode == 0, f"Not all packages installed for '{template}': {cp.stderr}"
+
         destroy_instance(name)
