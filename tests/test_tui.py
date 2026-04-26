@@ -280,6 +280,28 @@ class TestCreateVMScreen:
                 await pilot.press("q")
         _run_async(_test())
 
+    def test_submit_none_network(self):
+        screen = CreateVMScreen()
+        results = []
+
+        def _cb(result):
+            results.append(result)
+
+        async def _test():
+            app = Dashboard()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await app.push_screen(screen, _cb)
+                await pilot.pause()
+                screen.query_one("#name", Input).value = "testvm"
+                screen.query_one("#network_mode", Select).value = "none"
+                screen.action_submit()
+                await pilot.pause()
+                assert len(results) == 1
+                assert results[0]["recipe"]["network"]["mode"] == "none"
+                await pilot.press("q")
+        _run_async(_test())
+
     def test_submit_transient_and_destroy_flags(self):
         screen = CreateVMScreen()
         results = []
@@ -391,6 +413,28 @@ class TestRunVMScreen:
                 await pilot.pause()
                 assert len(results) == 1
                 assert results[0]["recipe"]["network"]["mode"] == "isolated"
+                await pilot.press("q")
+        _run_async(_test())
+
+    def test_submit_none_network(self):
+        screen = RunVMScreen()
+        results = []
+
+        def _cb(result):
+            results.append(result)
+
+        async def _test():
+            app = Dashboard()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await app.push_screen(screen, _cb)
+                await pilot.pause()
+                screen.query_one("#name", Input).value = "runvm"
+                screen.query_one("#network_mode", Select).value = "none"
+                screen.action_submit()
+                await pilot.pause()
+                assert len(results) == 1
+                assert results[0]["recipe"]["network"]["mode"] == "none"
                 await pilot.press("q")
         _run_async(_test())
 

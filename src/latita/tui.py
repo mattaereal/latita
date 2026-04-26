@@ -148,7 +148,7 @@ class FormScreen(Screen[dict[str, Any] | None]):
         )
         yield Input(placeholder="VM name", id="name")
         yield Select(
-            [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated")],
+            [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated"), ("None (no network device)", "none")],
             value="nat",
             id="network_mode",
         )
@@ -208,7 +208,7 @@ class CreateVMScreen(FormScreen):
         )
         yield Input(placeholder="VM name", id="name")
         yield Select(
-            [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated")],
+            [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated"), ("None (no network device)", "none")],
             value="nat",
             id="network_mode",
         )
@@ -248,7 +248,7 @@ class RunVMScreen(FormScreen):
         )
         yield Input(placeholder="VM name", id="name")
         yield Select(
-            [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated")],
+            [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated"), ("None (no network device)", "none")],
             value="nat",
             id="network_mode",
         )

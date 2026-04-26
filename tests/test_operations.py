@@ -234,3 +234,57 @@ class TestDesktopVideoModel:
             "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.3.x86_64.qcow2"
         )
         assert result is None
+
+
+class TestFindFreePort:
+    """Verify _find_free_port uses bind() so it finds truly available ports."""
+
+    def test_uses_bind_not_connect_ex(self):
+        from unittest.mock import MagicMock
+        from latita.operations import _find_free_port
+        import socket
+
+        with patch("latita.operations.socket.socket") as mock_socket_cls:
+            mock_sock = MagicMock()
+            mock_socket_cls.return_value = mock_sock
+            mock_sock.__enter__ = MagicMock(return_value=mock_sock)
+            mock_sock.__exit__ = MagicMock(return_value=False)
+
+            def side_effect(addr):
+                ip, port = addr
+                if port == 2222:
+                    raise OSError("Address already in use")
+                return None
+
+            mock_sock.bind.side_effect = side_effect
+            port = _find_free_port()
+            assert port == 2223
+            # bind should have been called, not connect_ex
+            assert mock_sock.bind.called
+            assert not mock_sock.connect_ex.called
+
+    def test_skips_busy_port(self):
+        from unittest.mock import MagicMock
+        from latita.operations import _find_free_port
+        import socket
+
+        with patch("latita.operations.socket.socket") as mock_socket_cls:
+            mock_sock = MagicMock()
+            mock_socket_cls.return_value = mock_sock
+            mock_sock.__enter__ = MagicMock(return_value=mock_sock)
+            mock_sock.__exit__ = MagicMock(return_value=False)
+
+            call_count = 0
+
+            def side_effect(addr):
+                nonlocal call_count
+                call_count += 1
+                ip, port = addr
+                if port < 2225:
+                    raise OSError("Address already in use")
+                return None
+
+            mock_sock.bind.side_effect = side_effect
+            port = _find_free_port()
+            assert port == 2225
+            assert call_count == 4  # 2222, 2223, 2224 failed; 2225 succeeded

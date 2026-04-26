@@ -125,11 +125,19 @@ def _check_libvirt_connectivity(cfg) -> None:
     )
 
 def _find_free_port(start: int = 2222, end: int = 9999) -> int:
-    """Find an available TCP port on localhost."""
+    """Find a bindable TCP port on localhost.
+
+    Uses bind() instead of connect_ex() because QEMU needs to *listen*
+    on the port for hostfwd. A port may reject connections (e.g. firewall)
+    yet still be occupied for binding, or vice versa.
+    """
     for port in range(start, end + 1):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(("127.0.0.1", port)) != 0:
+            try:
+                s.bind(("127.0.0.1", port))
                 return port
+            except OSError:
+                continue
     raise RuntimeError(f"No free TCP port found in range {start}-{end}")
 
 
