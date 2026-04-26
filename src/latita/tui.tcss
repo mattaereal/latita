@@ -1,6 +1,7 @@
 /* tui.tcss — Latita TUI stylesheet */
 
 /* Confirm modal */
+ConfirmScreen { align: center middle; }
 TypeToConfirmScreen { align: center middle; }
 #confirm-box { width: 60; height: auto; background: #1e1e2e; border: solid #89b4fa; padding: 1 2; }
 #confirm-msg { color: #cdd6f4; text-align: center; }
@@ -16,7 +17,7 @@ TypeToConfirmScreen { align: center middle; }
 .form-warn { color: #f9e2af; text-align: center; }
 .form-hint { color: #7f849c; text-align: center; height: 1; }
 .form-buttons { layout: horizontal; height: auto; margin-top: 1; }
-.form-buttons Button { width: 1fr; padding: 0 1; height: auto; }
+.form-buttons Button { width: 1fr; padding: 0 1; height: 1; border: none; }
 
 /* Apply capsule */
 #cap-net-warn { color: #f38ba8; text-style: bold; text-align: center; height: 3; }
@@ -50,5 +51,5 @@ Screen { layout: vertical; background: #1e1e2e; }
 #vm-table:focus { border: solid #89b4fa; }
 #action-list { height: 1fr; border: solid #313244; }
 #action-list:focus { border: solid #89b4fa; }
-#hint-pane { height: 1; color: #7f849c; background: #0f0f1a; border-top: solid #313244; padding: 0 1; }
+#hint-pane { height: 1; color: #7f849c; background: #0f0f1a; padding: 0 1; }
 #statusbar { dock: bottom; height: 1; color: #7f849c; background: #16161e; border-top: solid #313244; padding: 0 1; }

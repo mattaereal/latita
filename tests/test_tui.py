@@ -13,6 +13,7 @@ from latita.tui import (
     Dashboard,
     TemplatesScreen,
     CapsulesScreen,
+    ConfirmScreen,
     TypeToConfirmScreen,
     CreateVMScreen,
     RunVMScreen,
@@ -192,6 +193,65 @@ class TestScreensStructure:
                 assert screen.query_one("#browser-detail-scroll", ScrollableContainer) is not None
                 assert screen.query_one("#browser-detail", Static) is not None
                 await pilot.press("escape")
+                await pilot.press("q")
+        _run_async(_test())
+
+
+class TestConfirmScreen:
+    def test_confirm_screen_composes_with_buttons(self):
+        async def _test():
+            def _cb(result: bool) -> None:
+                pass
+
+            app = Dashboard()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app.push_screen(ConfirmScreen("Delete 'test' ?", _cb))
+                await pilot.pause()
+                assert isinstance(app.screen, ConfirmScreen)
+                assert app.screen.query_one("#btn-yes", Button) is not None
+                assert app.screen.query_one("#btn-no", Button) is not None
+                await pilot.press("n")
+                await pilot.pause()
+                assert not isinstance(app.screen, ConfirmScreen)
+                await pilot.press("q")
+        _run_async(_test())
+
+    def test_confirm_yes_triggers_result(self):
+        async def _test():
+            results = []
+
+            def _cb(result: bool) -> None:
+                results.append(result)
+
+            app = Dashboard()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app.push_screen(ConfirmScreen("Delete 'test' ?", _cb))
+                await pilot.pause()
+                await pilot.press("y")
+                await pilot.pause()
+                assert not isinstance(app.screen, ConfirmScreen)
+                assert results == [True]
+                await pilot.press("q")
+        _run_async(_test())
+
+    def test_confirm_no_cancels(self):
+        async def _test():
+            results = []
+
+            def _cb(result: bool) -> None:
+                results.append(result)
+
+            app = Dashboard()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app.push_screen(ConfirmScreen("Delete 'test' ?", _cb))
+                await pilot.pause()
+                await pilot.press("n")
+                await pilot.pause()
+                assert not isinstance(app.screen, ConfirmScreen)
+                assert results == [False]
                 await pilot.press("q")
         _run_async(_test())
 

@@ -685,7 +685,10 @@ def _run_create(
     mgmt_mac = random_mac()
 
     ud_path = inst / "user-data.yaml"
-    if net_mode not in ("isolated", "none"):
+    # Skip network-config in user mode (session SLIRP) — the VM only has one
+    # interface and cloud-init's v2 config with two ethernets causes service
+    # failures. In user mode the guest OS defaults to DHCP on the single NIC.
+    if net_mode not in ("isolated", "none", "user"):
         net_cfg = build_network_config(
             wan_mac, mgmt_mac, net["mgmt_ip"], net["mgmt_prefix"]
         )
@@ -989,7 +992,8 @@ def run_instance(
         net = recipe["network"]
 
         ud_path = Path(td) / "user-data.yaml"
-        if net["mode"] not in ("isolated", "none"):
+        # Skip network-config in user mode (session SLIRP) — one NIC only.
+        if net["mode"] not in ("isolated", "none", "user"):
             net_cfg = build_network_config(wan_mac, random_mac(), net["mgmt_ip"], net["mgmt_prefix"])
             nc_path = Path(td) / "network-config.yaml"
             ud_path.write_text(user_data)

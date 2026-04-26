@@ -86,6 +86,45 @@ class ActionItem(ListItem):
 # Confirm modal
 # ---------------------------------------------------------------------------
 
+class ConfirmScreen(Screen):
+    """Simple Yes/No modal. 'No' is the default focus to prevent accidental confirms."""
+
+    BINDINGS = [
+        Binding("y", "yes", "Yes", show=False),
+        Binding("n", "no", "No", show=False),
+        Binding("escape", "no", "No", show=False),
+    ]
+
+    def __init__(self, message: str, on_result: Callable[[bool], None]) -> None:
+        super().__init__()
+        self.message = message
+        self.on_result = on_result
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-box"):
+            yield Static(self.message, id="confirm-msg")
+            with Horizontal(id="confirm-buttons", classes="form-buttons"):
+                yield Button("No", id="btn-no", variant="primary")
+                yield Button("Yes", id="btn-yes", variant="error")
+
+    def on_mount(self) -> None:
+        self.query_one("#btn-no", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-yes":
+            self.action_yes()
+        elif event.button.id == "btn-no":
+            self.action_no()
+
+    def action_yes(self) -> None:
+        self.app.pop_screen()
+        self.on_result(True)
+
+    def action_no(self) -> None:
+        self.app.pop_screen()
+        self.on_result(False)
+
+
 class TypeToConfirmScreen(Screen):
     """Type a confirmation word + Enter to proceed. Prevents accidental Enter spam."""
 
@@ -635,25 +674,33 @@ class BrowserScreen(Screen):
                 self._refresh_items()
                 app.notify(f"'{name}' deleted")
 
-        self.app.push_screen(TypeToConfirmScreen(f"Delete '{name}'?", "delete", _on_result))
+        self.app.push_screen(ConfirmScreen(f"Delete '{name}'?", _on_result))
 
     def action_rename(self) -> None:
         name = self._selected_name()
         if not name:
-            return
-        if self._is_builtin(name):
-            self.notify("Cannot rename built-in items", severity="warning")
             return
         app = self._app()
         if not app:
             return
         ext = self._file_ext()
 
-        def _do() -> str | None:
-            new_name = input("New name: ").strip()
-            if not new_name or new_name == name:
-                return None
+        # If built-in, copy to user directory first (same pattern as edit)
+        if self._is_builtin(name):
+            cfg = get_config()
+            dst = cfg.templates_dir / f"{name}{ext}"
+            cfg.templates_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_builtin(name, dst)
+            app.notify(f"Copied built-in to user directory")
+            old_path = dst
+        else:
             old_path = self._get_path(name)
+
+        def _do() -> str | None:
+            new_name = input("New name (empty = cancel): ").strip()
+            if not new_name or new_name == name:
+                print("Rename canceled.")
+                return None
             new_path = old_path.parent / f"{new_name}{ext}"
             if new_path.exists():
                 print(f"'{new_name}' already exists")
