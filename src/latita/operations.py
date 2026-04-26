@@ -174,9 +174,12 @@ def _detect_video_model() -> str:
     except Exception:
         pass
 
-    # Map QEMU device names to virt-install --video values
+    # Map QEMU device names to virt-install --video values.
+    # Note: virt-install --video virtio maps to virtio-gpu-pci (PCI model).
+    # virtio-gpu-device exists on some builds but sits on virtio-bus, not PCI,
+    # so --video virtio still fails. Only virtio-gpu-pci counts as "virtio".
     has_qxl = any(d in devices for d in ("qxl", "qxl-vga", "qxl-pci"))
-    has_virtio = any(d in devices for d in ("virtio-gpu-pci", "virtio-gpu-device", "virtio-gpu"))
+    has_virtio = "virtio-gpu-pci" in devices
     has_vga = any(d in devices for d in ("VGA", "cirrus-vga", "vmware-svga"))
 
     if has_qxl:

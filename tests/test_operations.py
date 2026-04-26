@@ -222,7 +222,7 @@ class TestDetectVideoModel:
     def test_falls_back_to_virtio(self):
         from latita.operations import _detect_video_model
         with patch("latita.operations.subprocess.run") as mock_run:
-            mock_run.return_value.stdout = 'name "virtio-gpu-device"\nname "VGA"\n'
+            mock_run.return_value.stdout = 'name "virtio-gpu-pci"\nname "VGA"\n'
             mock_run.return_value.stderr = ""
             import latita.operations as ops
             ops._VIDEO_MODEL_CACHE = None
@@ -232,6 +232,16 @@ class TestDetectVideoModel:
         from latita.operations import _detect_video_model
         with patch("latita.operations.subprocess.run") as mock_run:
             mock_run.return_value.stdout = 'name "VGA"\nname "cirrus-vga"\n'
+            mock_run.return_value.stderr = ""
+            import latita.operations as ops
+            ops._VIDEO_MODEL_CACHE = None
+            assert _detect_video_model() == "vga"
+
+    def test_virtio_gpu_device_not_pci_falls_back_to_vga(self):
+        """virtio-gpu-device (virtio-bus) is not virtio-gpu-pci (PCI)."""
+        from latita.operations import _detect_video_model
+        with patch("latita.operations.subprocess.run") as mock_run:
+            mock_run.return_value.stdout = 'name "virtio-gpu-device"\nname "VGA"\n'
             mock_run.return_value.stderr = ""
             import latita.operations as ops
             ops._VIDEO_MODEL_CACHE = None
