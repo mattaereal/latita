@@ -141,6 +141,57 @@ def _find_free_port(start: int = 2222, end: int = 9999) -> int:
     raise RuntimeError(f"No free TCP port found in range {start}-{end}")
 
 
+_VIDEO_MODEL_CACHE: str | None = None
+
+
+def _detect_video_model() -> str:
+    """Detect the best available QEMU video model for desktop VMs.
+
+    QEMU may be compiled without qxl or virtio-gpu-pci, so we probe
+    ``qemu-system-x86_64 -device help`` and pick the best available:
+    qxl > virtio > vga.
+
+    Result is cached for the process lifetime.
+    """
+    global _VIDEO_MODEL_CACHE
+    if _VIDEO_MODEL_CACHE is not None:
+        return _VIDEO_MODEL_CACHE
+
+    cfg = get_config()
+    qemu_bin = cfg.qemu_binary
+    if not qemu_bin:
+        qemu_bin = "qemu-system-x86_64"
+
+    devices: set[str] = set()
+    try:
+        out = subprocess.run(
+            [qemu_bin, "-device", "help"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+        devices = {m.group(1).lower() for m in re.finditer(r'name "([^"]+)"', out)}
+    except Exception:
+        pass
+
+    # Map QEMU device names to virt-install --video values
+    has_qxl = any(d in devices for d in ("qxl", "qxl-vga", "qxl-pci"))
+    has_virtio = any(d in devices for d in ("virtio-gpu-pci", "virtio-gpu-device", "virtio-gpu"))
+    has_vga = any(d in devices for d in ("VGA", "cirrus-vga", "vmware-svga"))
+
+    if has_qxl:
+        model = "qxl"
+    elif has_virtio:
+        model = "virtio"
+    elif has_vga:
+        model = "vga"
+    else:
+        model = "vga"  # universal fallback; virt-install will let QEMU pick
+
+    _VIDEO_MODEL_CACHE = model
+    return model
+
+
 def _build_nocloud_iso(
     ud_path: Path,
     nc_path: Path | None,
@@ -646,17 +697,10 @@ def _run_create(
         args.append("--transient")
 
     if recipe["profile"] == "desktop":
-        if cfg.is_session:
-            args.extend([
-                "--graphics", "spice,listen=127.0.0.1",
-                "--video", "virtio",
-            ])
-        else:
-            args.extend([
-                "--graphics", "spice,listen=127.0.0.1",
-                "--video", "qxl",
-                "--channel", "spicevmc",
-            ])
+        video_model = _detect_video_model()
+        args.extend(["--graphics", "spice,listen=127.0.0.1", "--video", video_model])
+        if not cfg.is_session:
+            args.extend(["--channel", "spicevmc"])
     else:
         args.extend(["--graphics", "none"])
 
@@ -1032,10 +1076,10 @@ def revive_instance(name: str) -> None:
         args.append("--transient")
 
     if spec.get("graphics") == "spice":
-        if cfg.is_session:
-            args.extend(["--graphics", "spice,listen=127.0.0.1", "--video", "virtio"])
-        else:
-            args.extend(["--graphics", "spice,listen=127.0.0.1", "--video", "qxl", "--channel", "spicevmc"])
+        video_model = _detect_video_model()
+        args.extend(["--graphics", "spice,listen=127.0.0.1", "--video", video_model])
+        if not cfg.is_session:
+            args.extend(["--channel", "spicevmc"])
     else:
         args.extend(["--graphics", "none"])
 

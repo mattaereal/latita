@@ -206,23 +206,49 @@ class TestDiscoverLatestFedoraUrl:
         assert result is None
 
 
-class TestDesktopVideoModel:
-    """Verify desktop VMs use virtio video in session mode, qxl in system mode."""
+class TestDetectVideoModel:
+    """Verify _detect_video_model probes QEMU and picks the best available."""
 
-    def test_session_mode_uses_virtio(self):
-        from latita.operations import _run_create
-        import inspect
-        source = inspect.getsource(_run_create)
-        assert 'cfg.is_session' in source
-        assert '"--video", "virtio"' in source
-        assert '"--video", "qxl"' in source
+    def test_prefers_qxl_when_available(self):
+        from latita.operations import _detect_video_model
+        with patch("latita.operations.subprocess.run") as mock_run:
+            mock_run.return_value.stdout = 'name "qxl-vga"\nname "virtio-gpu-pci"\nname "VGA"\n'
+            mock_run.return_value.stderr = ""
+            # Reset cache
+            import latita.operations as ops
+            ops._VIDEO_MODEL_CACHE = None
+            assert _detect_video_model() == "qxl"
 
-    def test_system_mode_uses_qxl(self):
-        from latita.operations import _run_create
-        import inspect
-        source = inspect.getsource(_run_create)
-        assert '"--video", "qxl"' in source
-        assert '"--channel", "spicevmc"' in source
+    def test_falls_back_to_virtio(self):
+        from latita.operations import _detect_video_model
+        with patch("latita.operations.subprocess.run") as mock_run:
+            mock_run.return_value.stdout = 'name "virtio-gpu-device"\nname "VGA"\n'
+            mock_run.return_value.stderr = ""
+            import latita.operations as ops
+            ops._VIDEO_MODEL_CACHE = None
+            assert _detect_video_model() == "virtio"
+
+    def test_falls_back_to_vga(self):
+        from latita.operations import _detect_video_model
+        with patch("latita.operations.subprocess.run") as mock_run:
+            mock_run.return_value.stdout = 'name "VGA"\nname "cirrus-vga"\n'
+            mock_run.return_value.stderr = ""
+            import latita.operations as ops
+            ops._VIDEO_MODEL_CACHE = None
+            assert _detect_video_model() == "vga"
+
+    def test_caches_result(self):
+        from latita.operations import _detect_video_model
+        with patch("latita.operations.subprocess.run") as mock_run:
+            mock_run.return_value.stdout = 'name "qxl"\n'
+            mock_run.return_value.stderr = ""
+            import latita.operations as ops
+            ops._VIDEO_MODEL_CACHE = None
+            first = _detect_video_model()
+            second = _detect_video_model()
+            assert first == second == "qxl"
+            # subprocess should only be called once due to cache
+            assert mock_run.call_count == 1
 
     @patch("latita.operations.urllib.request.urlopen")
     def test_returns_none_on_network_error(self, mock_urlopen):

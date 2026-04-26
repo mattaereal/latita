@@ -74,6 +74,7 @@ class Config:
     default_base_url: str
     default_base_name: str
     net_name: str
+    qemu_binary: str = ""
 
     @property
     def vm_dir(self) -> Path:
