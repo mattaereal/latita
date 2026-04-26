@@ -244,12 +244,12 @@ class FormScreen(Screen[dict[str, Any] | None]):
 
     def _compose_fields(self) -> ComposeResult:
         """Child classes override to yield extra widgets."""
+        yield Input(placeholder="VM name", id="name")
         yield Select(
             [("headless", "headless"), ("desktop", "desktop")],
             value="headless",
             id="profile",
         )
-        yield Input(placeholder="VM name", id="name")
         yield Select(
             [("NAT (shared with host)", "nat"), ("Isolated (no internet)", "isolated"), ("None (no network device)", "none")],
             value="nat",
@@ -265,7 +265,6 @@ class FormScreen(Screen[dict[str, Any] | None]):
             self._toggle_video_visibility(new_profile)
             self._update_name_on_profile_change(new_profile)
             self._last_profile = new_profile
-            self._focus_next_after("#profile")
         elif event.select.id == "network_mode":
             self._focus_next_after("#network_mode")
         elif event.select.id == "video_model":
@@ -273,7 +272,7 @@ class FormScreen(Screen[dict[str, Any] | None]):
 
     def _focus_next_after(self, widget_id: str) -> None:
         """Focus the next focusable widget after the given one."""
-        order = ["#profile", "#name", "#network_mode", "#video_model", "#transient", "#destroy_on_stop", "#command", "#btn-create", "#btn-cancel"]
+        order = ["#name", "#profile", "#network_mode", "#video_model", "#transient", "#destroy_on_stop", "#command", "#btn-create", "#btn-cancel"]
         try:
             idx = order.index(widget_id)
         except ValueError:
@@ -298,6 +297,8 @@ class FormScreen(Screen[dict[str, Any] | None]):
             hint.styles.display = "none"
 
     def on_mount(self) -> None:
+        name_widget = self.query_one("#name", Input)
+        name_widget.focus()
         profile_widget = self.query_one("#profile", Select)
         self._toggle_video_visibility(str(profile_widget.value) if profile_widget.value else "headless")
 
