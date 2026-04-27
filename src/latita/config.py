@@ -138,10 +138,7 @@ class Config:
         return cls(
             root_dir=root,
             libvirt_uri=_auto_libvirt_uri(),
-            default_base_url=(
-                "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/"
-                "Fedora-Cloud-Base-Generic.x86_64-43-1.3.qcow2"
-            ),
+            default_base_url="",
             default_base_name="fedora43-base.qcow2",
             net_name="mgmt-nogw",
         )
@@ -339,14 +336,16 @@ def is_builtin_capsule(name: str, cfg: Config | None = None) -> bool:
 # Base images catalog
 # ---------------------------------------------------------------------------
 
-BASE_IMAGES = {
+BASE_IMAGES: dict[str, dict[str, Any]] = {
     "Fedora 43 Cloud": {
         "filename": "fedora43-base.qcow2",
-        "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2",
+        "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/",
+        "discover": True,
     },
     "Fedora 42 Cloud": {
         "filename": "fedora42-base.qcow2",
-        "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-42-1.1.x86_64.qcow2",
+        "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/",
+        "discover": True,
     },
     "Ubuntu 24.04 LTS Cloud": {
         "filename": "ubuntu2404-base.qcow2",

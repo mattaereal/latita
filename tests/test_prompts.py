@@ -332,7 +332,11 @@ class TestPromptDownloadBaseImage:
 
         result = prompt_download_base_image()
         assert result is True
-        mock_init.assert_called_once_with("fedora43-base.qcow2", "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2")
+        mock_init.assert_called_once_with(
+            "fedora43-base.qcow2",
+            "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/",
+            discover=True,
+        )
 
     @patch("latita.prompts.questionary")
     @patch("latita.operations.init_base")

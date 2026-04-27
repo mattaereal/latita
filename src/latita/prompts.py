@@ -256,7 +256,7 @@ def prompt_download_base_image() -> bool:
     if choice is None or choice == "← Cancel":
         return False
     info = BASE_IMAGES[choice]
-    init_base(info["filename"], info["url"])
+    init_base(info["filename"], info["url"], discover=info.get("discover", False))
     return True
 
 

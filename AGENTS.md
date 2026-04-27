@@ -40,7 +40,6 @@ Stored in `spec.json` per instance:
 
 ### UX design principles
 
-Inspired by [smolvm](https://github.com/smol-machines/smolvm):
 - **Defaults over configuration**: templates encode decisions; the CLI is for exceptions.
 - **Secure by default**: network off, SELinux on, no guest agent. Explicit opt-in for connectivity.
 - **Tiered interaction**: `create` is 2 prompts, `--advanced` adds resources, `--full` exposes everything.
@@ -100,6 +99,18 @@ Run `.venv3/bin/python -m pytest tests/` for the full suite (195 tests including
 ### Known bugs fixed
 
 - **dnf package block `+` artifact**: `_package_install_block` in `cloudinit.py` previously joined package names with ` \\n+      `, causing literal `+` arguments to be passed to `dnf install`. This caused all multi-package installs to fail with "No match for argument: +". Fixed by removing the stray `+` characters from the join string.
+
+### Base image catalog maintenance
+
+`BASE_IMAGES` in `config.py` stores the curated list of downloadable base images. **Fedora entries use directory URLs with `discover: True`** — the latest point release is scraped from the directory listing at download time, so point-release churn (e.g., `1.6` → `1.7`) never breaks downloads or tests.
+
+When a **new Fedora major release** drops (e.g., Fedora 44):
+1. Verify Cloud images exist at `releases/N/Cloud/x86_64/images/` (not just the release root).
+2. Add the entry to `BASE_IMAGES` with `discover: True` and a directory URL.
+3. Update `Config.default()`'s `default_base_name` if adopting the new release as default.
+4. Do **not** auto-detect the latest major release at runtime — new releases may lack Cloud images for weeks, or the image format may change.
+
+Ubuntu LTS entries (e.g., `noble/current/`) use a stable `current/` symlink and do not need discovery.
 
 ### Future work
 

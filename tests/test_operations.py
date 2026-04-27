@@ -188,10 +188,11 @@ class TestBuildRecipe:
 
 class TestDiscoverLatestFedoraUrl:
     @patch("latita.operations.urllib.request.urlopen")
-    def test_returns_latest_from_html(self, mock_urlopen):
+    def test_returns_latest_from_directory_url(self, mock_urlopen):
+        """Discovery works when passed a directory URL (new BASE_IMAGES format)."""
         html = (
             '<tr><td><a href="Fedora-Cloud-Base-Generic-43-1.3.x86_64.qcow2">file</a></td></tr>'
-            '<tr><td><a href="Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2">file</a></td></tr>'
+            '<tr><td><a href="Fedora-Cloud-Base-Generic-43-1.7.x86_64.qcow2">file</a></td></tr>'
         )
         mock_resp = MagicMock()
         mock_resp.read.return_value = html.encode()
@@ -201,9 +202,28 @@ class TestDiscoverLatestFedoraUrl:
         from latita.operations import _discover_latest_fedora_url
 
         result = _discover_latest_fedora_url(
-            "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.3.x86_64.qcow2"
+            "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/"
         )
-        assert result == "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2"
+        assert result == "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.7.x86_64.qcow2"
+
+    @patch("latita.operations.urllib.request.urlopen")
+    def test_derives_directory_from_file_url(self, mock_urlopen):
+        """Backward-compat: discovery still works from a file URL."""
+        html = (
+            '<tr><td><a href="Fedora-Cloud-Base-Generic-42-1.1.x86_64.qcow2">file</a></td></tr>'
+            '<tr><td><a href="Fedora-Cloud-Base-Generic-42-1.5.x86_64.qcow2">file</a></td></tr>'
+        )
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = html.encode()
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        from latita.operations import _discover_latest_fedora_url
+
+        result = _discover_latest_fedora_url(
+            "https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-42-1.1.x86_64.qcow2"
+        )
+        assert result == "https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-42-1.5.x86_64.qcow2"
 
 
 class TestDetectVideoModel:
@@ -267,7 +287,7 @@ class TestDetectVideoModel:
         from latita.operations import _discover_latest_fedora_url
 
         result = _discover_latest_fedora_url(
-            "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.3.x86_64.qcow2"
+            "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/"
         )
         assert result is None
 

@@ -437,8 +437,14 @@ def bootstrap_host() -> None:
     base_img = cfg.base_dir / cfg.default_base_name
     if not base_img.exists():
         console.print(f"\n[yellow]Base image not found: {base_img}[/yellow]")
-        if typer.confirm("Download Fedora 43 base image now?", default=True):
-            init_base(cfg.default_base_name, cfg.default_base_url)
+        # Look up the default base image in BASE_IMAGES catalog
+        base_info = None
+        for data in BASE_IMAGES.values():
+            if data["filename"] == cfg.default_base_name:
+                base_info = data
+                break
+        if base_info and typer.confirm(f"Download {cfg.default_base_name} now?", default=True):
+            init_base(base_info["filename"], base_info["url"], base_info.get("discover", False))
             console.print(f"  [green]✓[/green] Downloaded: {cfg.default_base_name}")
         else:
             console.print("  Skipped. Run 'latita init-base' later.", style="yellow")
@@ -452,11 +458,15 @@ def bootstrap_host() -> None:
 # Base image download
 # ---------------------------------------------------------------------------
 
-def init_base(name: str | None = None, url: str | None = None) -> None:
+def init_base(
+    name: str | None = None,
+    url: str | None = None,
+    discover: bool = False,
+) -> None:
     need_cmd("curl", "qemu-img")
     get_config().ensure_dirs()
     if name and url:
-        _download_base(name, url)
+        _download_base(name, url, discover=discover)
         return
     choices = list(BASE_IMAGES.keys()) + ["cancel"]
     choice = typer.prompt(
@@ -467,13 +477,18 @@ def init_base(name: str | None = None, url: str | None = None) -> None:
     if choice == "cancel":
         return
     info = BASE_IMAGES[choice]
-    _download_base(info["filename"], info["url"])
+    _download_base(info["filename"], info["url"], discover=info.get("discover", False))
 
 
 def _discover_latest_fedora_url(url: str) -> str | None:
-    """If a Fedora Cloud image URL 404s, scrape the directory listing for the latest Generic qcow2."""
-    # Derive the directory URL from the file URL
-    dir_url = url.rsplit("/", 1)[0] + "/"
+    """Scrape a Fedora Cloud image directory listing for the latest Generic qcow2.
+
+    Accepts either a directory URL (ending in /) or a file URL.
+    """
+    if url.endswith("/"):
+        dir_url = url
+    else:
+        dir_url = url.rsplit("/", 1)[0] + "/"
     try:
         with urllib.request.urlopen(dir_url, timeout=20) as resp:  # noqa: S310
             html = resp.read().decode("utf-8", errors="ignore")
@@ -513,21 +528,31 @@ def _maybe_download_base(base_image_name: str) -> bool:
         f"Base image '{base_image_name}' not found. Download from catalog?",
         default=True,
     ):
-        _download_base(info["filename"], info["url"])
+        _download_base(info["filename"], info["url"], discover=info.get("discover", False))
         return (cfg.base_dir / base_image_name).exists()
     return False
 
 
-def _download_base(name: str, url: str) -> None:
+def _download_base(name: str, url: str, discover: bool = False) -> None:
     cfg = get_config()
     dst = cfg.base_dir / name
     if dst.exists():
         console.print(f"Base image already exists: {dst}", style="green")
         return
+
+    download_url = url
+    if discover:
+        discovered = _discover_latest_fedora_url(url)
+        if discovered:
+            download_url = discovered
+            console.print(f"[dim]Discovered latest image:[/dim] {discovered}")
+        else:
+            raise RuntimeError(f"Could not discover latest Fedora image in {url}")
+
     try:
-        run(["curl", "-L", "--fail", "-o", str(dst), url])
+        run(["curl", "-L", "--fail", "-o", str(dst), download_url])
     except subprocess.CalledProcessError as exc:
-        if exc.returncode == 22:  # curl --fail 404
+        if exc.returncode == 22 and not discover:  # curl --fail 404; fallback for non-discover URLs
             discovered = _discover_latest_fedora_url(url)
             if discovered and discovered != url:
                 console.print(f"[yellow]Base image URL 404; retrying with discovered URL:[/yellow] {discovered}")
