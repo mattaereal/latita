@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from latita.config import Config, get_config, load_latita_template, set_config
+from latita.config import Config, get_config, load_latita_template, reset_config, set_config
 from latita.libvirt import get_vm_ip_addresses, get_vm_state
 from latita.metadata import read_instance_env, read_instance_recipe
 from latita.operations import (
@@ -680,3 +682,155 @@ class TestTemplateProvisioning:
         assert cp.returncode == 0, f"Not all packages installed for '{template}': stdout={cp.stdout!r} stderr={cp.stderr!r}"
 
         destroy_instance(name)
+
+
+@pytest.mark.system
+@pytest.mark.very_slow
+class TestMvpE2E:
+    """MVP end-to-end: desktop-minimal VM reaches code-server on a headless VM.
+
+    Requires qemu:///system and the default libvirt NAT network so both VMs
+    share a routable subnet (192.168.122.0/24).
+    """
+
+    @staticmethod
+    def _system_mode_available() -> bool:
+        cp = subprocess.run(
+            ["virsh", "-c", "qemu:///system", "uri"],
+            capture_output=True,
+            text=True,
+        )
+        return cp.returncode == 0 and "qemu:///system" in cp.stdout
+
+    def _setup_system_config(self) -> Config:
+        tmp = Path(tempfile.mkdtemp(prefix="latita-e2e-"))
+        cfg = Config(
+            root_dir=tmp,
+            libvirt_uri="qemu:///system",
+            default_base_url="",
+            default_base_name="fedora43-base.qcow2",
+            net_name="default",
+        )
+        set_config(cfg)
+        cfg.ensure_dirs()
+        # Link base image if it exists in the user's vault
+        base_img = cfg.base_dir / "fedora43-base.qcow2"
+        if not base_img.exists():
+            user_base = Path.home() / "latita-vault" / "vm" / "base" / "fedora43-base.qcow2"
+            if user_base.exists():
+                base_img.symlink_to(user_base)
+        return cfg
+
+    def _ensure_default_network(self, cfg: Config) -> None:
+        from latita.libvirt import (
+            network_exists,
+            network_is_active,
+            define_network,
+            start_network,
+            create_network_xml,
+        )
+        if not network_exists("default"):
+            xml = create_network_xml(
+                name="default",
+                mode="nat",
+                ip_address="192.168.122.1",
+                netmask="255.255.255.0",
+                dhcp_start="192.168.122.100",
+                dhcp_end="192.168.122.200",
+            )
+            p = cfg.net_dir / "default.xml"
+            p.write_text(xml)
+            define_network(p)
+        if not network_is_active("default"):
+            start_network("default")
+
+    def _wait_for_nat_ip(self, name: str, timeout: int = 180) -> str:
+        """Poll libvirt for a 192.168.122.x DHCP lease."""
+        start = time.time()
+        while time.time() - start < timeout:
+            for addr in get_vm_ip_addresses(name):
+                ip = addr.get("ip", "")
+                if ip.startswith("192.168.122."):
+                    return ip
+            time.sleep(5)
+        raise TimeoutError(f"No NAT IP found for {name} after {timeout}s")
+
+    def test_desktop_minimal_reaches_code_server(self):
+        if not self._system_mode_available():
+            pytest.skip("qemu:///system not available (requires libvirtd + sudo)")
+
+        cfg = self._setup_system_config()
+        self._ensure_default_network(cfg)
+
+        # Verify base image
+        if not (cfg.base_dir / "fedora43-base.qcow2").exists():
+            reset_config()
+            shutil.rmtree(cfg.root_dir, ignore_errors=True)
+            pytest.skip("Fedora 43 base image not available")
+
+        overrides = {
+            "base_image": "fedora43-base.qcow2",
+            "ephemeral": {"transient": False, "destroy_on_stop": False},
+            "memory": 2048,
+            "cpus": 2,
+            "disk_size": "10G",
+            "network": {"mode": "nat", "nat_network": "default"},
+            "security": {"no_guest_agent": False},
+        }
+
+        headless = "test-e2e-headless"
+        desktop = "test-e2e-desktop"
+
+        try:
+            # 1. Create headless VM with code-server capsule
+            create_instance(
+                "headless",
+                name=headless,
+                overrides=overrides,
+                capsule_names=["code-server"],
+            )
+            start_instance(headless)
+
+            # 2. Discover headless IP on the shared NAT
+            headless_ip = self._wait_for_nat_ip(headless, timeout=180)
+
+            # 3. Create desktop-minimal VM
+            create_instance("desktop-minimal", name=desktop, overrides=overrides)
+            start_instance(desktop)
+
+            # 4. Wait for desktop SSH
+            _wait_for_ssh_ready(desktop, timeout=300)
+
+            # 5. From desktop, curl code-server on headless
+            #    (container image pull + startup can take a few minutes)
+            curl_cmd = (
+                f"curl -s -o /dev/null -w '%{{http_code}}' "
+                f"--connect-timeout 10 --max-time 30 "
+                f"http://{headless_ip}:8443/login"
+            )
+            code = None
+            start = time.time()
+            while time.time() - start < 300:
+                cp = _ssh_run(desktop, curl_cmd, timeout=60)
+                if cp.returncode == 0:
+                    code = cp.stdout.strip()
+                    if code in ("200", "301", "302"):
+                        break
+                time.sleep(10)
+            assert code in ("200", "301", "302"), (
+                f"Code-server not reachable from desktop-minimal VM: "
+                f"code={code!r} stdout={cp.stdout!r} stderr={cp.stderr!r}"
+            )
+
+            # 6. Verify brave-browser is installed on desktop-minimal
+            cp = _ssh_run(desktop, "rpm -q brave-browser", timeout=30)
+            assert cp.returncode == 0, f"brave-browser not installed: {cp.stderr}"
+
+        finally:
+            for vm in (headless, desktop):
+                try:
+                    destroy_instance(vm)
+                except Exception:
+                    pass
+            reset_config()
+            shutil.rmtree(cfg.root_dir, ignore_errors=True)

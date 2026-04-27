@@ -33,6 +33,7 @@ addopts = "-v --tb=short"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "very_slow: marks tests as very slow (>5 min, may need network) (deselect with '-m \"not very_slow\"')",
+    "system: marks tests that require qemu:///system (deselect with '-m \"not system\"')",
 ]
 
 [dependency-groups]

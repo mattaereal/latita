@@ -46,23 +46,32 @@ Stored in `spec.json` per instance:
 - **One-shot runner**: `latita run` for ephemeral, auto-cleaned VMs with no persistent state.
 - **Project config**: `.latita` file in cwd merged with CLI flags, similar to a `Smolfile`.
 
-### Session mode
+### System vs Session mode
 
-If `LIBVIRT_DEFAULT_URI` is `qemu:///session` or `Config.for_tests` is used, latita:
+| | `qemu:///system` | `qemu:///session` |
+|---|---|---|
+| **Privileges** | Root / sudo required for network setup | Unprivileged — works out of the box |
+| **Networking** | Shared NAT bridges (e.g. `default` at 192.168.122.0/24). VMs on the same network can talk to each other. | Isolated SLIRP per VM (10.0.2.0/24). VMs **cannot** reach each other. |
+| **SSH access** | Direct VM IP (e.g. 192.168.122.235) | `localhost:PORT` via QEMU `hostfwd` (port 2222-9999) |
+| **Use case** | Production, multi-VM labs, networking tests | Quick one-offs, CI, unprivileged workstations |
+| **Test suite** | `test_desktop_minimal_reaches_code_server` (MVP E2E) requires system mode | All other E2E tests run in session mode |
+
+**Session mode specifics**: When `LIBVIRT_DEFAULT_URI` is `qemu:///session` (or auto-detected as fallback), latita:
 - Skips root-only network setup (no bridge creation)
-- Falls back to `user` networking (SLIRP) instead of NAT bridges
+- Forces `user` networking (SLIRP) even if the template asks for `nat`
 - Skips `setfacl` / `grant_qemu_path_access`
-- Works out of the box for unprivileged users
+- Injects `--qemu-commandline` with `hostfwd=tcp::PORT-:22` so SSH works via localhost
+- The forwarded port is stored in instance env as `FORWARDED_SSH_PORT`
 
-**Port forwarding for SSH**: Session-mode VMs get automatic QEMU `hostfwd` port forwarding via `--qemu-commandline`. `create_instance` picks a free localhost port (e.g. 2222-9999) and forwards it to guest port 22. The port is stored in instance env as `FORWARDED_SSH_PORT`. `ssh_instance` and `apply_capsule_live` use `localhost:PORT` when this variable is set.
+**System mode specifics**:
+- Requires `libvirtd` running and the user in the `libvirt` group (or sudo)
+- Creates/activates the `default` NAT network for shared VM-to-VM routing
+- Uses the VM's actual DHCP-assigned IP for SSH
+- **Multi-VM E2E tests** (desktop → headless code-server) only work in system mode because session-mode VMs live on isolated SLIRP networks
 
-**Cloud-init in session mode**: Latita builds a persistent NoCloud ISO with `xorriso` (label `cidata`) and attaches it as a CD-ROM disk. This is more reliable than `virt-install --cloud-init`, whose temporary ISO was sometimes missing by the time the guest booted in `qemu:///session` mode. The test suite includes a real end-to-end SSH test (`test_real_ssh_to_vm_executes_command`) that verifies cloud-init creates the `dev` user, installs `openssh-server`, and enables `sshd`.
+**Auto-detection**: `Config.default()` probes `qemu:///system` at startup. If the socket is absent or connection is refused, it automatically falls back to `qemu:///session`. Set `LIBVIRT_DEFAULT_URI` explicitly to override.
 
-**Network auto-setup**: `create_instance` and `run_instance` now automatically set up the `mgmt-nogw` management network and activate NAT networks as needed — no separate `bootstrap_host` invocation is required. `bootstrap_host` remains useful for first-time setup of keys and base images.
-
-**Libvirt connectivity check**: Before any VM operation, latita verifies the configured libvirt URI is reachable. If `qemu:///system` is unavailable (no socket, no sudo, connection refused), `create_instance` and `run_instance` fail with a clear message: `Cannot connect to libvirt at qemu:///system. Set LIBVIRT_DEFAULT_URI=qemu:///session to use user-level libvirt without sudo, or ensure the system libvirtd daemon is running and sudo is configured.`
-
-**Auto-detection**: `Config.default()` now probes `qemu:///system` at startup. If the socket is absent or connection is refused, it automatically falls back to `qemu:///session` — no env var needed. Set `LIBVIRT_DEFAULT_URI` explicitly to override.
+**Libvirt connectivity check**: Before any VM operation, latita verifies the configured libvirt URI is reachable. If `qemu:///system` is unavailable, `create_instance` fails with: `Cannot connect to libvirt at qemu:///system. Set LIBVIRT_DEFAULT_URI=qemu:///session to use user-level libvirt without sudo, or ensure the system libvirtd daemon is running and sudo is configured.`
 
 **virt-install and system gi**: `virt-install` depends on `gi` (PyGObject) which is typically installed at the system Python level. When latita runs under `uv run`, the venv's site-packages takes precedence over system site-packages, so `virt-install` would fail to find `gi`. To fix this, `virt_install()` in `libvirt.py` detects the system site-packages path (by probing `/usr/bin/python3`) and injects it via `PYTHONPATH` when calling virt-install. This ensures virt-install works correctly regardless of whether it's invoked via `uv run` or directly.
 

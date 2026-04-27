@@ -737,8 +737,8 @@ def _run_create(
     ]
 
     # Desktop needs login hash unless it's desktop-minimal (autologin, no password needed)
-    login_hash = ""
-    if recipe["profile"] == "desktop" and recipe.get("template_name") != "desktop-minimal":
+    login_hash = recipe.get("login_hash", "")
+    if not login_hash and recipe["profile"] == "desktop" and recipe.get("template_name") != "desktop-minimal":
         login_hash = hash_password_interactive(guest_user=recipe["guest_user"])
 
     pkg_mgr = _package_manager_for_recipe(recipe)
@@ -1103,7 +1103,7 @@ def run_instance(
             host_pubkey=host_pubkey,
             lab_pubkey=lab_pubkey,
             lab_privkey=Path(keys["lab_privkey_path"]) if keys.get("lab_privkey_path") else None,
-            login_hash="",
+            login_hash=recipe.get("login_hash", ""),
             provision=recipe["provision"],
             capsule_provisions=capsule_provisions,
             passwordless_sudo=recipe["passwordless_sudo"],
@@ -1551,7 +1551,7 @@ def apply_capsule_live(name: str, capsule_name: str) -> None:
     if verify_cmd:
         console.print(f"Verifying capsule '{capsule_name}'...", style="dim")
         formatted_verify = capsules.format_verify_command(capsule, recipe.get("guest_user", "dev"))
-        v_ssh = ssh_cmd[:-1] + [f"{user}@{ip}", "bash", "-lc", formatted_verify]
+        v_ssh = ssh_cmd[:-1] + [formatted_verify]
         _stream_ssh(v_ssh)
 
 

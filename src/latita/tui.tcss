@@ -19,6 +19,11 @@ TypeToConfirmScreen { align: center middle; }
 .form-buttons { layout: horizontal; height: auto; margin-top: 1; }
 .form-buttons Button { width: 1fr; padding: 0 1; height: 1; border: none; }
 
+/* Advanced section */
+#btn-advanced { width: 100%; margin-top: 1; }
+#advanced-fields { margin-top: 1; }
+.form-subtitle { color: #89b4fa; text-style: bold; margin-top: 1; }
+
 /* Apply capsule */
 #cap-net-warn { color: #f38ba8; text-style: bold; text-align: center; height: 3; }
 

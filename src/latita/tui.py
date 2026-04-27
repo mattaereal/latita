@@ -333,6 +333,32 @@ class FormScreen(Screen[dict[str, Any] | None]):
         yield Select(video_opts, value=video_default or None, id="video_model")
         yield Static("Video model (desktop VMs only)", id="video-hint", classes="form-hint")
 
+        # Advanced toggle
+        yield Button("Advanced ▼", id="btn-advanced", variant="primary")
+        with Vertical(id="advanced-fields"):
+            yield Static("Guest user & authentication", classes="form-subtitle")
+            yield Input(value="dev", id="guest_user")
+            yield Input(value="latita", password=True, id="password")
+            yield Checkbox("Passwordless sudo", value=True, id="passwordless_sudo")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-advanced":
+            self._toggle_advanced()
+        elif event.button.id == "btn-create":
+            self.action_submit()
+        elif event.button.id == "btn-cancel":
+            self.action_dismiss()
+
+    def _toggle_advanced(self) -> None:
+        adv = self.query_one("#advanced-fields", Vertical)
+        btn = self.query_one("#btn-advanced", Button)
+        if adv.styles.display == "none":
+            adv.styles.display = "block"
+            btn.label = "Advanced ▲"
+        else:
+            adv.styles.display = "none"
+            btn.label = "Advanced ▼"
+
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "profile":
             new_template = str(event.value) if event.value else "headless"
@@ -370,12 +396,9 @@ class FormScreen(Screen[dict[str, Any] | None]):
         profile_widget = self.query_one("#profile", Select)
         current_template = str(profile_widget.value) if profile_widget.value else "headless"
         self._toggle_video_visibility(current_template)
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-create":
-            self.action_submit()
-        elif event.button.id == "btn-cancel":
-            self.action_dismiss()
+        # Hide advanced section by default
+        adv = self.query_one("#advanced-fields", Vertical)
+        adv.styles.display = "none"
 
     def action_submit(self) -> None:
         name_widget = self.query_one("#name", Input)
@@ -411,6 +434,23 @@ class FormScreen(Screen[dict[str, Any] | None]):
             video = str(video_widget.value) if video_widget.value else ""
             if video:
                 recipe["video_model"] = video
+
+        # Advanced fields (always include so the CLI can use them)
+        guest_user_widget = self.query_one("#guest_user", Input)
+        password_widget = self.query_one("#password", Input)
+        sudo_widget = self.query_one("#passwordless_sudo", Checkbox)
+
+        guest_user = guest_user_widget.value.strip() or "dev"
+        recipe["guest_user"] = guest_user
+        recipe["passwordless_sudo"] = sudo_widget.value
+
+        # Hash password for desktop profiles that need it
+        if profile == "desktop" and template_name != "desktop-minimal":
+            password = password_widget.value
+            if password:
+                from .utils import hash_password
+                recipe["login_hash"] = hash_password(password)
+
         return recipe
 
     def action_dismiss(self) -> None:

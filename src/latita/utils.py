@@ -170,8 +170,14 @@ def hash_password_interactive(guest_user: str = "dev") -> str:
         if not pw1:
             print("password required")
             continue
-        cp = run(["openssl", "passwd", "-6", "-stdin"], capture=True, input_text=pw1 + "\n")
-        return cp.stdout.strip()
+        return hash_password(pw1)
+
+
+def hash_password(password: str) -> str:
+    """Hash a plaintext password with openssl SHA-512 (non-interactive)."""
+    need_cmd("openssl")
+    cp = run(["openssl", "passwd", "-6", "-stdin"], capture=True, input_text=password + "\n")
+    return cp.stdout.strip()
 
 
 def read_text(path: Path) -> str:
