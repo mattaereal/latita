@@ -2,7 +2,7 @@
 
 Spin up isolated VMs in seconds, harden them automatically, and extend them with drop-in capsules.
 
-Inspired by the simplicity of container runners like [smolvm](https://github.com/smol-machines/smolvm) — but built on standard QEMU/libvirt so it runs anywhere Linux does.
+Built on standard QEMU/libvirt so it runs anywhere Linux does.
 
 ## Install
 
@@ -255,6 +255,20 @@ Networking is **off by default** (`mode: isolated`). Enable with `--net` or `--n
 - `latita capsule list` / `latita capsule apply <vm> <capsule>`
 - `latita template list` / `latita template show <name>` / `latita template generate`
 - `latita doctor` — dependency check
+
+## Comparison with alternatives
+
+| | Latita | Vagrant | Multipass | smolvm |
+|---|---|---|---|---|
+| **Backend** | QEMU/libvirt (standard, no custom kernel) | VirtualBox/VMware/Hyper-V | QEMU/KVM (snap-specific) | libkrun (custom micro-VMM) |
+| **Host OS** | Any Linux | macOS, Windows, Linux | Ubuntu-focused | Linux only |
+| **Guest flexibility** | Any cloud image (Fedora, Ubuntu, Arch, etc.) | Box-dependent | Ubuntu-only | Linux only |
+| **Security defaults** | Isolated network, SELinux, no guest agent | User-configured | User-configured | Warning: experimental sandbox |
+| **Ephemeral lifecycle** | Built-in (transient, destroy_on_stop, expiry) | Manual | Manual | Transient only |
+| **Extensibility** | Capsules (drop-in YAML) | Vagrantfile plugins | Cloud-init only | None |
+| **CLI style** | Tiered prompts + one-shot runner | Ruby DSL | Simple commands | Single-shot |
+
+Latita differs from Vagrant in targeting ephemeral, throw-away VMs rather than long-lived dev environments. It differs from Multipass by supporting any guest OS and any Linux host with standard libvirt. Unlike smolvm, it uses battle-tested QEMU/libvirt rather than an experimental micro-VMM.
 
 ## License
 

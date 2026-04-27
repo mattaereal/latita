@@ -74,7 +74,7 @@ class TestTemplates:
         assert data["profile"] == "desktop"
         assert "provision" in data
         pkgs = data["provision"]["packages"]
-        assert "lightdm-gtk-greeter" in pkgs
+        assert "lightdm-gtk" in pkgs
         assert "xorg-x11-drv-qxl" in pkgs
         assert "xorg-x11-drv-virtio" not in pkgs
 

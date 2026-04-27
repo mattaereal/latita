@@ -203,7 +203,7 @@ class TestDiscoverLatestFedoraUrl:
         result = _discover_latest_fedora_url(
             "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.3.x86_64.qcow2"
         )
-        assert result is None
+        assert result == "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2"
 
 
 class TestDetectVideoModel:

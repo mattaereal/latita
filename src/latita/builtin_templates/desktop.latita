@@ -29,14 +29,14 @@ provision:
     - openssh-server
     - spice-vdagent
     - lightdm
-    - lightdm-gtk-greeter
+    - lightdm-gtk
     - xorg-x11-server-Xorg
     - xorg-x11-drv-qxl
     - mesa-dri-drivers
     - xfce4-session
     - xfce4-panel
     - xfdesktop
-    - thunar
+    - Thunar
     - xterm
   write_files:
     - path: /etc/lightdm/lightdm.conf.d/50-autologin.conf

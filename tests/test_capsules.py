@@ -193,7 +193,7 @@ class TestBuiltinCapsules:
 
     def test_all_builtin_capsules_load(self):
         names = list_capsules()
-        assert len(names) == 5  # ai-agents, code-server, hermes, tailscale, whisper
+        assert len(names) == 6  # ai-agents, code-server, hermes, podman-host, tailscale, whisper
         for name in names:
             cap = load_capsule(name)
             assert "description" in cap, f"{name} missing description"

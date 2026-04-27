@@ -25,7 +25,7 @@ security:
 provision:
   packages:
     - git
-    - vim
+    - vim-enhanced
     - podman
     - crun
     - slirp4netns

@@ -31,7 +31,7 @@ provision:
     - xorg-x11-drv-qxl
     - mesa-dri-drivers
     - openbox
-    - tint2
+    - lxpanel
     - xterm
   write_files:
     - path: /etc/systemd/system/getty@tty1.service.d/override.conf
@@ -52,7 +52,7 @@ provision:
       owner: "{guest_user}:{guest_user}"
       permissions: "0644"
       content: |
-        tint2 &
+        lxpanel &
         exec openbox-session
     - path: /etc/X11/xorg.conf.d/10-video.conf
       owner: root:root

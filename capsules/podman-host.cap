@@ -1,0 +1,24 @@
+description: Rootless Podman setup with required dependencies
+compatibility:
+  profiles: [headless, desktop]
+  os_family: [fedora, ubuntu]
+depends_on: []
+
+provision:
+  packages:
+    - podman
+    - crun
+    - slirp4netns
+    - fuse-overlayfs
+    - container-selinux
+  root_commands:
+    - loginctl enable-linger {guest_user}
+  user_commands:
+    - runuser -u {guest_user} -- podman info >/dev/null || true
+
+live:
+  user: dev
+  commands:
+    - podman info >/dev/null || true
+
+verify: podman --version && echo "[OK] podman installed" || echo "[FAIL] podman missing"

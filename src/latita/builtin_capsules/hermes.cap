@@ -17,3 +17,5 @@ live:
   commands:
     - pip3 install --user hermes-agent
     - hermes --help 2>/dev/null || echo "Hermes not available; check pip installation"
+
+verify: hermes --help >/dev/null 2>&1 && echo "[OK] Hermes ready" || echo "[FAIL] Hermes not available"

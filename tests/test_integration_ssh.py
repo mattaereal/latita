@@ -181,20 +181,17 @@ class TestFedoraSsh:
         env = read_instance_env(name)
         forwarded_port = env.get("FORWARDED_SSH_PORT")
 
-        real_run = subprocess.run
+        ssh_cmds: list[list[str]] = []
 
-        def _side_effect(*args, **kwargs):
-            cmd = args[0] if args else kwargs.get("args", [])
-            if isinstance(cmd, list) and len(cmd) > 0 and cmd[0] == "ssh":
-                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-            return real_run(*args, **kwargs)
+        def _capture_stream_ssh(cmd):
+            ssh_cmds.append(cmd)
+            return True
 
-        with patch("latita.operations.subprocess.run", side_effect=_side_effect) as mock_run:
+        with patch("latita.operations._stream_ssh", side_effect=_capture_stream_ssh):
             apply_capsule_live(name, "test-echo")
 
-            ssh_calls = [c for c in mock_run.call_args_list if c.args and len(c.args[0]) > 0 and c.args[0][0] == "ssh"]
-            assert len(ssh_calls) >= 1
-            cmd = ssh_calls[0].args[0]
+            assert len(ssh_cmds) >= 1
+            cmd = ssh_cmds[0]
             assert cmd[0] == "ssh"
             assert "capsule-live-test" in str(cmd)
             if forwarded_port:
@@ -282,9 +279,10 @@ class TestFedoraSsh:
 
 
 def _wait_for_ssh_ready(name: str, timeout: int = 300) -> str:
-    """Poll until SSH accepts connections, returning the VM IP."""
+    """Poll until SSH accepts connections, returning the target host (IP or localhost)."""
     env = read_instance_env(name)
     user = env.get("GUEST_USER", "dev")
+    forwarded_port = env.get("FORWARDED_SSH_PORT")
     recipe = read_instance_recipe(name)
     key = None
     if recipe:
@@ -296,13 +294,16 @@ def _wait_for_ssh_ready(name: str, timeout: int = 300) -> str:
         raise RuntimeError("No SSH private key found")
 
     start = time.time()
-    ip = None
+    target = None
     while time.time() - start < timeout:
-        try:
-            ip = _wait_for_vm_ip(name, timeout=10)
-        except TimeoutError:
-            time.sleep(3)
-            continue
+        if forwarded_port:
+            target = "localhost"
+        else:
+            try:
+                target = _wait_for_vm_ip(name, timeout=10)
+            except TimeoutError:
+                time.sleep(3)
+                continue
         cmd = [
             "ssh",
             "-o", "StrictHostKeyChecking=no",
@@ -310,12 +311,14 @@ def _wait_for_ssh_ready(name: str, timeout: int = 300) -> str:
             "-o", "ConnectTimeout=5",
             "-o", "BatchMode=yes",
             "-i", key,
-            f"{user}@{ip}",
-            "echo ssh-ready",
         ]
+        if forwarded_port:
+            cmd.extend(["-p", forwarded_port])
+        cmd.extend([f"{user}@{target}", "echo ssh-ready"])
+
         cp = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         if cp.returncode == 0 and "ssh-ready" in cp.stdout:
-            return ip
+            return target
         time.sleep(3)
     raise TimeoutError(f"SSH not ready for {name} after {timeout}s")
 
@@ -324,6 +327,7 @@ def _ssh_run(name: str, command: str, timeout: int = 30) -> subprocess.Completed
     """Run a command on a VM via SSH using the injected lab key."""
     env = read_instance_env(name)
     user = env.get("GUEST_USER", "dev")
+    forwarded_port = env.get("FORWARDED_SSH_PORT")
     recipe = read_instance_recipe(name)
     key = None
     if recipe:
@@ -334,7 +338,7 @@ def _ssh_run(name: str, command: str, timeout: int = 30) -> subprocess.Completed
     if not key:
         raise RuntimeError("No SSH private key found")
 
-    ip = _wait_for_ssh_ready(name, timeout=300)
+    target = _wait_for_ssh_ready(name, timeout=300)
 
     cmd = [
         "ssh",
@@ -343,9 +347,10 @@ def _ssh_run(name: str, command: str, timeout: int = 30) -> subprocess.Completed
         "-o", "ConnectTimeout=10",
         "-o", "BatchMode=yes",
         "-i", key,
-        f"{user}@{ip}",
-        command,
     ]
+    if forwarded_port:
+        cmd.extend(["-p", forwarded_port])
+    cmd.extend([f"{user}@{target}", command])
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
@@ -664,7 +669,14 @@ class TestTemplateProvisioning:
         assert packages, f"Template '{template}' has no packages to verify"
 
         verify_cmd = self._build_verify_command(template, pkg_manager, packages)
-        cp = _ssh_run(name, verify_cmd, timeout=60)
-        assert cp.returncode == 0, f"Not all packages installed for '{template}': {cp.stderr}"
+        # Retry until cloud-init/bootstrap finishes installing packages
+        # (dnf can take several minutes on a loaded host; be patient)
+        start = time.time()
+        while time.time() - start < 600:
+            cp = _ssh_run(name, verify_cmd, timeout=60)
+            if cp.returncode == 0:
+                break
+            time.sleep(10)
+        assert cp.returncode == 0, f"Not all packages installed for '{template}': stdout={cp.stdout!r} stderr={cp.stderr!r}"
 
         destroy_instance(name)

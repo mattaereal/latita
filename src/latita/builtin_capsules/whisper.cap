@@ -9,7 +9,7 @@ provision:
     - git
     - make
     - gcc
-    - g++
+    - gcc-c++
   user_commands:
     - |
       if [ ! -d /home/{guest_user}/whisper.cpp ]; then

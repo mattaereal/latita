@@ -35,7 +35,7 @@ provision:
     - xfce4-session
     - xfce4-panel
     - xfdesktop
-    - thunar
+    - Thunar
     - xterm
   write_files:
     - path: /etc/lightdm/lightdm.conf.d/50-autologin.conf
