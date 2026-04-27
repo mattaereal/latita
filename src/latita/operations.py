@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -1014,8 +1015,9 @@ def destroy_instance(name: str) -> None:
     validate_name(name)
     cfg = get_config()
     if vm_exists(name):
-        stop_vm_libvirt(name)
-        undefine_vm_libvirt(name)
+        # Capture expected errors (already stopped / transient domain)
+        stop_vm_libvirt(name, capture=True)
+        undefine_vm_libvirt(name, capture=True)
         if vm_exists(name):
             raise typer.BadParameter(
                 f"failed to undefine VM '{name}' in libvirt. "
@@ -1025,20 +1027,11 @@ def destroy_instance(name: str) -> None:
     if inst.exists():
         overlay = inst / f"{name}.qcow2"
         shred_file(overlay)
-        remaining: list[Path] = []
-        for f in inst.iterdir():
-            if f.is_file():
-                try:
-                    shred_file(f)
-                except PermissionError:
-                    remaining.append(f)
         try:
             shutil.rmtree(inst)
         except PermissionError:
-            remaining.extend(inst.iterdir())
-        if remaining:
             console.print(
-                f"[yellow]Some files in {inst} could not be deleted (permission denied).[/yellow]\n"
+                f"[yellow]Could not remove {inst} (permission denied).[/yellow]\n"
                 f"Run: sudo rm -rf {inst}",
             )
     console.print(f"Destroyed {name}", style="green")
@@ -1486,6 +1479,16 @@ def apply_capsule_live(name: str, capsule_name: str) -> None:
             f"Capsules that download packages or images will fail.[/yellow]"
         )
 
+    # Re-apply guard
+    applied = read_applied_capsules(name)
+    if capsule_name in applied:
+        if not typer.confirm(
+            f"Capsule '{capsule_name}' was already applied to '{name}'. Re-apply (replace)?",
+            default=False,
+        ):
+            console.print(f"Skipped re-applying '{capsule_name}'.", style="yellow")
+            return
+
     cmds = capsules.format_live_commands(capsule, recipe.get("guest_user", "dev"))
     if not cmds:
         console.print(f"Capsule '{capsule_name}' has no live commands", style="yellow")
@@ -1535,7 +1538,7 @@ def apply_capsule_live(name: str, capsule_name: str) -> None:
     ]
     if ssh_port:
         ssh_cmd.extend(["-p", str(ssh_port)])
-    ssh_cmd.extend([f"{user}@{ip}", "bash", "-lc", script])
+    ssh_cmd.extend([f"{user}@{ip}", f"bash -lc {shlex.quote(script)}"])
 
     console.print(f"Applying capsule '{capsule_name}' to {name} via SSH...", style="cyan")
     success = _stream_ssh(ssh_cmd)
@@ -1551,7 +1554,7 @@ def apply_capsule_live(name: str, capsule_name: str) -> None:
     if verify_cmd:
         console.print(f"Verifying capsule '{capsule_name}'...", style="dim")
         formatted_verify = capsules.format_verify_command(capsule, recipe.get("guest_user", "dev"))
-        v_ssh = ssh_cmd[:-1] + [formatted_verify]
+        v_ssh = ssh_cmd[:-1] + [f"bash -lc {shlex.quote(formatted_verify)}"]
         _stream_ssh(v_ssh)
 
 

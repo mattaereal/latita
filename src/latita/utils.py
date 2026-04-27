@@ -189,7 +189,8 @@ def shred_file(path: Path, passes: int = 3) -> None:
         return
     try:
         if shutil.which("shred"):
-            run(["shred", "-n", str(passes), "-u", str(path)], check=False)
+            # Capture output so permission errors don't spam the terminal
+            run(["shred", "-n", str(passes), "-u", str(path)], check=False, capture=True)
         else:
             path.unlink()
     except PermissionError:

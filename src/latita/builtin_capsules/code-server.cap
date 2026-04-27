@@ -11,7 +11,7 @@ provision:
       podman volume inspect code-server-local >/dev/null 2>&1 || podman volume create code-server-local >/dev/null
       podman volume inspect code-server-config >/dev/null 2>&1 || podman volume create code-server-config >/dev/null
       mkdir -p /home/{guest_user}/workspace
-      podman run -d --name code-server --restart=unless-stopped \
+      podman run -d --replace --name code-server --restart=unless-stopped \
         -p 0.0.0.0:8443:8080 \
         -v /home/{guest_user}/workspace:/home/coder/project:Z \
         -v code-server-local:/home/coder/.local \
@@ -21,8 +21,7 @@ provision:
 live:
   user: dev
   commands:
-    - podman rm -f code-server 2>/dev/null || true
     - mkdir -p /home/{guest_user}/workspace
-    - podman run -d --name code-server --restart=unless-stopped -p 0.0.0.0:8443:8080 -v /home/{guest_user}/workspace:/home/coder/project:Z ghcr.io/coder/code-server:latest
+    - podman run -d --replace --name code-server --restart=unless-stopped -p 0.0.0.0:8443:8080 -v /home/{guest_user}/workspace:/home/coder/project:Z ghcr.io/coder/code-server:latest
 
 verify: podman ps | grep -q code-server && echo "[OK] code-server running" || echo "[FAIL] code-server not running"

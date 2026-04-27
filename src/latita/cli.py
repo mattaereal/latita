@@ -360,9 +360,21 @@ def start_cmd(name: str) -> None:
     start_instance(name)
 
 
+@app.command(name="up")
+def up_cmd(name: str) -> None:
+    """Alias for 'start'."""
+    start_instance(name)
+
+
 @app.command(name="stop")
 def stop_cmd(name: str) -> None:
     """Stop a VM. Ephemeral VMs are destroyed."""
+    stop_instance(name)
+
+
+@app.command(name="down")
+def down_cmd(name: str) -> None:
+    """Alias for 'stop'."""
     stop_instance(name)
 
 
@@ -372,6 +384,30 @@ def destroy_cmd(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
     """Destroy a VM and shred its overlay."""
+    if not force:
+        if not typer.confirm(f"Destroy VM '{name}' and shred its disk?", default=False):
+            raise typer.Abort()
+    destroy_instance(name)
+
+
+@app.command(name="rm")
+def rm_cmd(
+    name: str,
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """Alias for 'destroy'."""
+    if not force:
+        if not typer.confirm(f"Destroy VM '{name}' and shred its disk?", default=False):
+            raise typer.Abort()
+    destroy_instance(name)
+
+
+@app.command(name="del")
+def del_cmd(
+    name: str,
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """Alias for 'destroy'."""
     if not force:
         if not typer.confirm(f"Destroy VM '{name}' and shred its disk?", default=False):
             raise typer.Abort()
@@ -403,6 +439,37 @@ def connect_cmd(name: str) -> None:
 def list_cmd() -> None:
     """List all VMs."""
     list_instances()
+
+
+@app.command(name="ls")
+def ls_cmd() -> None:
+    """Alias for 'list'."""
+    list_instances()
+
+
+@app.command(name="ps")
+def ps_cmd() -> None:
+    """List running VMs (compact format)."""
+    from rich.table import Table
+    entries = [e for e in scan_instances() if e.get("status") == "running"]
+    if not entries:
+        console.print("No running VMs", style="yellow")
+        return
+    table = Table(title="Running VMs")
+    table.add_column("NAME")
+    table.add_column("TEMPLATE")
+    table.add_column("IP")
+    table.add_column("CPUS")
+    table.add_column("MEM")
+    for e in entries:
+        table.add_row(
+            e["name"],
+            e["template"] or e["profile"],
+            e["ip"] or e["mgmt_ip"] or "-",
+            str(e.get("cpus", "-")),
+            str(e.get("memory", "-")),
+        )
+    console.print(table)
 
 
 @app.command(name="bootstrap")
@@ -437,6 +504,16 @@ def doctor_cmd(install: bool = False) -> None:
 @capsule_app.command(name="list")
 def capsule_list_cmd() -> None:
     """List available capsules."""
+    all_caps = list_capsules()
+    if not all_caps:
+        console.print("No capsules found", style="yellow")
+        return
+    caps_mod.format_capsule_table(all_caps)
+
+
+@capsule_app.command(name="ls")
+def capsule_ls_cmd() -> None:
+    """Alias for 'capsule list'."""
     all_caps = list_capsules()
     if not all_caps:
         console.print("No capsules found", style="yellow")
@@ -489,6 +566,12 @@ def template_list_cmd() -> None:
             desc,
         )
     console.print(table)
+
+
+@template_app.command(name="ls")
+def template_ls_cmd() -> None:
+    """Alias for 'template list'."""
+    template_list_cmd()
 
 
 @template_app.command(name='show')

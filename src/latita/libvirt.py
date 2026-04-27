@@ -249,8 +249,8 @@ def start_vm_libvirt(name: str) -> None:
     virsh("start", name)
 
 
-def stop_vm_libvirt(name: str) -> None:
-    virsh("destroy", name, check=False)
+def stop_vm_libvirt(name: str, capture: bool = False) -> None:
+    virsh("destroy", name, check=False, capture=capture)
 
 
 def resume_vm_libvirt(name: str) -> None:
@@ -261,8 +261,8 @@ def suspend_vm_libvirt(name: str) -> None:
     virsh("suspend", name)
 
 
-def undefine_vm_libvirt(name: str) -> None:
-    virsh("undefine", "--managed-save", name, check=False)
+def undefine_vm_libvirt(name: str, capture: bool = False) -> None:
+    virsh("undefine", "--managed-save", name, check=False, capture=capture)
 
 
 from .config import Config

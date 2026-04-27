@@ -205,6 +205,39 @@ class TestFedoraSsh:
 
         destroy_instance(name)
 
+    def test_apply_capsule_live_runs_via_ssh(self, fedora_cfg):
+        """apply_capsule_live actually executes capsule commands over SSH."""
+        cfg = fedora_cfg
+        name = "test-f43-capsule-real"
+        self._create_fedora_vm(cfg, name)
+        start_instance(name)
+
+        # Create a marker-writing capsule in the isolated config
+        marker_capsule = cfg.root_dir / "capsules" / "test-marker.cap"
+        marker_capsule.write_text(
+            """description: Write a marker file for E2E testing
+compatibility:
+  profiles: [headless]
+  os_family: [fedora]
+live:
+  user: dev
+  commands:
+    - echo "executed" > /tmp/capsule-applied
+"""
+        )
+
+        _wait_for_ssh_ready(name, timeout=300)
+
+        # Apply the capsule via real SSH (no mocks)
+        apply_capsule_live(name, "test-marker")
+
+        # Verify the marker file was written
+        cp = _ssh_run(name, "cat /tmp/capsule-applied", timeout=30)
+        assert cp.returncode == 0, f"Marker file missing: {cp.stderr}"
+        assert "executed" in cp.stdout
+
+        destroy_instance(name)
+
     def test_ensure_running_auto_starts_stopped_vm(self, fedora_cfg):
         """_ensure_running starts a stopped VM so it can be reached again."""
         from latita.cli import _ensure_running
