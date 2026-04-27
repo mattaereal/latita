@@ -540,30 +540,49 @@ def _download_base(name: str, url: str, discover: bool = False) -> None:
         console.print(f"Base image already exists: {dst}", style="green")
         return
 
-    download_url = url
-    if discover:
-        discovered = _discover_latest_fedora_url(url)
-        if discovered:
-            download_url = discovered
-            console.print(f"[dim]Discovered latest image:[/dim] {discovered}")
-        else:
-            raise RuntimeError(f"Could not discover latest Fedora image in {url}")
+    # Build list of URLs to try: primary then any mirrors from BASE_IMAGES
+    urls_to_try = [url]
+    for data in BASE_IMAGES.values():
+        if data.get("filename") == name:
+            for mirror in data.get("mirror_urls", []):
+                urls_to_try.append(mirror)
+            break
 
-    try:
-        run(["curl", "-L", "--fail", "-o", str(dst), download_url])
-    except subprocess.CalledProcessError as exc:
-        if exc.returncode == 22 and not discover:  # curl --fail 404; fallback for non-discover URLs
-            discovered = _discover_latest_fedora_url(url)
-            if discovered and discovered != url:
-                console.print(f"[yellow]Base image URL 404; retrying with discovered URL:[/yellow] {discovered}")
-                run(["curl", "-L", "--fail", "-o", str(dst), discovered])
+    last_exc: Exception | None = None
+    for attempt_url in urls_to_try:
+        download_url = attempt_url
+        if discover:
+            discovered = _discover_latest_fedora_url(attempt_url)
+            if discovered:
+                download_url = discovered
+                console.print(f"[dim]Discovered latest image:[/dim] {discovered}")
             else:
-                raise
-        else:
-            raise
-    dst.chmod(0o444)
-    run(["qemu-img", "info", str(dst)])
-    console.print(f"Downloaded: {dst}", style="green")
+                console.print(f"[yellow]Could not discover image from {attempt_url}; skipping.[/yellow]")
+                continue
+
+        try:
+            # curl: follow redirects, retry transient errors, 30s connect timeout, 10min max
+            run([
+                "curl", "-L", "--fail",
+                "--retry", "3", "--retry-delay", "5",
+                "--connect-timeout", "30", "--max-time", "600",
+                "-o", str(dst), download_url,
+            ])
+            dst.chmod(0o444)
+            run(["qemu-img", "info", str(dst)])
+            console.print(f"Downloaded: {dst}", style="green")
+            return
+        except subprocess.CalledProcessError as exc:
+            last_exc = exc
+            console.print(
+                f"[yellow]Download from {download_url} failed (exit {exc.returncode});"
+                f" trying next source...[/yellow]"
+            )
+
+    raise RuntimeError(
+        f"Failed to download '{name}' from all sources. "
+        f"Last error: {last_exc}"
+    ) from last_exc
 
 
 # ---------------------------------------------------------------------------

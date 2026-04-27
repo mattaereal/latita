@@ -112,6 +112,8 @@ When a **new Fedora major release** drops (e.g., Fedora 44):
 
 Ubuntu LTS entries (e.g., `noble/current/`) use a stable `current/` symlink and do not need discovery.
 
+**Mirror fallbacks**: Fedora entries include `mirror_urls` (e.g., `mirrors.kernel.org`). `_download_base` tries the primary redirector first, then falls back to mirrors if the connection fails (e.g., FCIX mirror `edgeuno-bod2.mm.fcix.net` returning 443 errors). Each attempt uses `curl --retry 3 --connect-timeout 30 --max-time 600` for resilience.
+
 ### Future work
 
 - **Snapshot / clone support**: `latita snapshot <name>` and `latita clone <name> <new-name>` using `qemu-img` backing chains.

@@ -341,11 +341,17 @@ BASE_IMAGES: dict[str, dict[str, Any]] = {
         "filename": "fedora43-base.qcow2",
         "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/",
         "discover": True,
+        "mirror_urls": [
+            "https://mirrors.kernel.org/fedora/releases/43/Cloud/x86_64/images/",
+        ],
     },
     "Fedora 42 Cloud": {
         "filename": "fedora42-base.qcow2",
         "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/",
         "discover": True,
+        "mirror_urls": [
+            "https://mirrors.kernel.org/fedora/releases/42/Cloud/x86_64/images/",
+        ],
     },
     "Ubuntu 24.04 LTS Cloud": {
         "filename": "ubuntu2404-base.qcow2",
